@@ -23,6 +23,7 @@ METRICS_SERVER_CHART=3.14.0   # metrics-server — CPU usage for the API's HPA (
 step() { printf '\n\033[1;36m==> %s\033[0m\n' "$*"; }
 need() { command -v "$1" >/dev/null || { echo "Missing '$1'. In Codespaces: rebuild the container (.devcontainer)." >&2; exit 1; }; }
 for tool in docker kind kubectl helm openssl; do need "$tool"; done
+echo "kind $(kind version -q 2>/dev/null || kind version) · $(kubectl version --client 2>/dev/null | head -1) · helm $(helm version --short)"
 
 # ---------------------------------------------------------------------------------------------------------
 step "Cluster"
@@ -40,13 +41,26 @@ helm repo add kedacore https://kedacore.github.io/charts --force-update >/dev/nu
 helm repo add metrics-server https://kubernetes-sigs.github.io/metrics-server --force-update >/dev/null
 helm repo update traefik kedacore metrics-server >/dev/null
 
-helm upgrade --install traefik traefik/traefik --version "$TRAEFIK_CHART" \
-  --namespace traefik --create-namespace -f k8s/local/traefik-values.yaml --wait --timeout 5m
-helm upgrade --install keda kedacore/keda --version "$KEDA_CHART" \
-  --namespace keda --create-namespace --wait --timeout 5m
+# Install one chart and wait for it. If it does not become ready, show WHY (pod status, events, logs of the
+# previous run) instead of Helm's bare "context deadline exceeded".
+addon() {
+  local release=$1 namespace=$2; shift 2
+  if ! helm upgrade --install "$release" "$@" --namespace "$namespace" --create-namespace --wait --timeout 5m; then
+    echo "::group::$release did not become ready" >&2
+    kubectl -n "$namespace" get pods -o wide >&2 || true
+    kubectl -n "$namespace" describe pods >&2 || true
+    kubectl -n "$namespace" get events --sort-by=.lastTimestamp >&2 || true
+    kubectl -n "$namespace" logs -l "app.kubernetes.io/instance=$release" --all-containers --previous --tail 40 >&2 || true
+    echo "::endgroup::" >&2
+    exit 1
+  fi
+}
+
+addon traefik traefik traefik/traefik --version "$TRAEFIK_CHART" -f k8s/local/traefik-values.yaml
+addon keda keda kedacore/keda --version "$KEDA_CHART"
 # kind's kubelets use self-signed certificates; trusting them is fine on a throwaway local node only
-helm upgrade --install metrics-server metrics-server/metrics-server --version "$METRICS_SERVER_CHART" \
-  --namespace kube-system --set 'args={--kubelet-insecure-tls}' --wait --timeout 5m
+addon metrics-server kube-system metrics-server/metrics-server --version "$METRICS_SERVER_CHART" \
+  --set 'args={--kubelet-insecure-tls}'
 
 # ---------------------------------------------------------------------------------------------------------
 IMAGES=(creditdesk-api:dev creditdesk-ai-worker:dev creditdesk-shell:dev creditdesk-mfe-customers:dev creditdesk-mfe-proposals:dev)

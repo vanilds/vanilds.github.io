@@ -63,8 +63,13 @@ jobs:
       - name: Diagnostics
         if: failure()
         run: |
+          kubectl get pods -A -o wide || true
           kubectl -n creditdesk get all,ingress,hpa,scaledobject,pvc -o wide || true
-          kubectl -n creditdesk get events --sort-by=.lastTimestamp | tail -40 || true
+          kubectl get events -A --sort-by=.lastTimestamp | tail -60 || true
+          echo "::group::pods not ready"
+          kubectl get pods -A --no-headers | awk '$3 !~ /^([0-9]+)\/\1$/ || $4 != "Running" {print $1, $2}' \
+            | while read -r ns pod; do kubectl -n "$ns" describe pod "$pod" | tail -40; done || true
+          echo "::endgroup::"
           for app in api keycloak ai-worker shell; do
             echo "::group::logs $app"; kubectl -n creditdesk logs "deploy/$app" --all-containers --tail 80 || true; echo "::endgroup::"
           done
