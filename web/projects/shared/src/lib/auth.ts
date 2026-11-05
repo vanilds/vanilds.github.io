@@ -62,7 +62,7 @@ export function provideCreditDeskAuth(
         silentRenew: true,
         useRefreshToken: true,
         renewTimeBeforeTokenExpiresInSeconds: 30,
-        secureRoutes: [env.apiUrl],
+        secureRoutes: [`${env.apiUrl}/api/`], // only our API: on a cluster, Keycloak shares the origin
         logLevel: LogLevel.Warn,
       },
     }),
