@@ -181,6 +181,70 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/api/proposals/{id}/documents': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Documents of a proposal
+     * @description Only confirmed (AVAILABLE) documents, oldest first.
+     */
+    get: operations['listProposalDocuments'];
+    put?: never;
+    /**
+     * Start an upload
+     * @description Owner only, while DRAFT. PDF, JPEG or PNG up to 10 MB, at most 10 per proposal. Returns a presigned PUT URL valid for 5 minutes: send the file there, then call confirm.
+     */
+    post: operations['addProposalDocument'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/proposals/{id}/documents/{documentId}/confirm': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Finish an upload
+     * @description The API checks the object in S3 (exists, same size and type) and makes it AVAILABLE. 409 if the file was not sent yet; 422 if it differs from what was declared.
+     */
+    post: operations['confirmProposalDocument'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/proposals/{id}/documents/{documentId}/download': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Get a download link
+     * @description A presigned GET URL valid for about a minute. POST, not GET: every download is audited, so asking for a link is an action, not a harmless read.
+     */
+    post: operations['downloadProposalDocument'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/api/proposals/{id}/history': {
     parameters: {
       query?: never;
@@ -193,6 +257,26 @@ export interface paths {
      * @description Every status change, oldest first, with who did it and the reason.
      */
     get: operations['getProposalHistory'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/proposals/{id}/opinions': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * AI opinions of a proposal
+     * @description Newest first; empty while the worker is still drafting. The screen polls this after a submit. Advisory only: approving or rejecting is always a manager's decision.
+     */
+    get: operations['listProposalOpinions'];
     put?: never;
     post?: never;
     delete?: never;
@@ -285,6 +369,30 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
   schemas: {
+    AddDocumentRequest: {
+      /** @enum {string} */
+      category:
+        | 'INCOME_PROOF'
+        | 'FINANCIAL_STATEMENT'
+        | 'BANK_STATEMENT'
+        | 'IDENTITY'
+        | 'ADDRESS_PROOF'
+        | 'DEBT_STATEMENT'
+        | 'OTHER';
+      /**
+       * @description application/pdf, image/jpeg or image/png
+       * @example application/pdf
+       */
+      contentType: string;
+      /** @example payslip-october.pdf */
+      fileName: string;
+      /**
+       * Format: int64
+       * @description Exact size in bytes, at most 10 MB. S3 refuses any other size.
+       * @example 184320
+       */
+      sizeBytes?: number;
+    };
     AuditEntryResponse: {
       /** @enum {string} */
       action?:
@@ -300,6 +408,9 @@ export interface components {
         | 'PROPOSAL_APPROVED'
         | 'PROPOSAL_REJECTED'
         | 'PROPOSAL_RETURNED'
+        | 'PROPOSAL_OPINION_RECORDED'
+        | 'PROPOSAL_DOCUMENT_ADDED'
+        | 'PROPOSAL_DOCUMENT_DOWNLOADED'
         | 'SYSTEM_MIGRATION';
       /** @description Keycloak user id (token subject) */
       actorId?: string;
@@ -385,6 +496,68 @@ export interface components {
       updatedAt?: string;
       /** Format: int64 */
       version?: number;
+    };
+    DocumentResponse: {
+      /** @enum {string} */
+      category?:
+        | 'INCOME_PROOF'
+        | 'FINANCIAL_STATEMENT'
+        | 'BANK_STATEMENT'
+        | 'IDENTITY'
+        | 'ADDRESS_PROOF'
+        | 'DEBT_STATEMENT'
+        | 'OTHER';
+      /** Format: date-time */
+      confirmedAt?: string;
+      contentType?: string;
+      /** Format: date-time */
+      createdAt?: string;
+      fileName?: string;
+      /** Format: uuid */
+      id?: string;
+      /** Format: int64 */
+      sizeBytes?: number;
+      /** @enum {string} */
+      status?: 'PENDING_UPLOAD' | 'AVAILABLE';
+      uploadedByName?: string;
+    };
+    /** @description Open the URL to download; it expires in about a minute and works for this one file only. */
+    DownloadResponse: {
+      /** Format: date-time */
+      expiresAt?: string;
+      url?: string;
+    };
+    /** @description AI credit opinion. Advisory: it supports the manager's decision, it never makes it. */
+    OpinionResponse: {
+      /** @description true for the opinion on the latest submission; false once the proposal was returned or submitted again after it */
+      current?: boolean;
+      /** Format: date-time */
+      generatedAt?: string;
+      /** Format: uuid */
+      id?: string;
+      /** @description Figures the rules used, e.g. installmentToIncome = 0.31 */
+      indicators?: {
+        [key: string]: unknown;
+      };
+      /**
+       * @description Model that wrote the summary, or rules-template when no LLM is configured
+       * @example rules-template-v1
+       */
+      model?: string;
+      /**
+       * Format: int64
+       * @description The submitted version it was drafted for
+       */
+      proposalVersion?: number;
+      /** Format: date-time */
+      receivedAt?: string;
+      /** @enum {string} */
+      recommendation?: 'FAVORABLE' | 'CAUTION' | 'UNFAVORABLE';
+      riskFlags?: components['schemas']['RiskFlag'][];
+      /** @enum {string} */
+      riskLevel?: 'LOW' | 'MEDIUM' | 'HIGH';
+      suggestedPlan?: components['schemas']['SuggestedPlan'];
+      summary?: components['schemas']['Summary'];
     };
     PageResponseAuditEntryResponse: {
       content?: components['schemas']['AuditEntryResponse'][];
@@ -472,6 +645,23 @@ export interface components {
       /** @enum {string} */
       type?: 'PF' | 'PJ';
     };
+    RiskFlag: {
+      /** @example HIGH_INSTALLMENT_TO_INCOME */
+      code: string;
+      /** @description English explanation; the front translates by code */
+      message: string;
+      /** @enum {string} */
+      severity: 'LOW' | 'MEDIUM' | 'HIGH';
+    };
+    SignedRequest: {
+      /** Format: date-time */
+      expiresAt?: string;
+      headers?: {
+        [key: string]: string;
+      };
+      method?: string;
+      url?: string;
+    };
     StatusChangeResponse: {
       actorName?: string;
       /** Format: date-time */
@@ -486,6 +676,16 @@ export interface components {
       reason?: string;
       /** @enum {string} */
       to?: 'DRAFT' | 'SUBMITTED' | 'IN_ANALYSIS' | 'APPROVED' | 'REJECTED' | 'CANCELLED';
+    };
+    SuggestedPlan: {
+      installmentAmount: number;
+      installmentToIncome: number;
+      /** Format: int32 */
+      installments?: number;
+    };
+    Summary: {
+      en: string;
+      pt: string;
     };
     TransitionRequest: {
       /**
@@ -525,6 +725,11 @@ export interface components {
        */
       monthlyRate?: number;
     };
+    /** @description Send the file with exactly this method, URL and headers, then call confirm. */
+    UploadResponse: {
+      document?: components['schemas']['DocumentResponse'];
+      upload?: components['schemas']['SignedRequest'];
+    };
   };
   responses: never;
   parameters: never;
@@ -532,10 +737,14 @@ export interface components {
   headers: never;
   pathItems: never;
 }
+export type AddDocumentRequest = components['schemas']['AddDocumentRequest'];
 export type AuditEntryResponse = components['schemas']['AuditEntryResponse'];
 export type CreateCustomerRequest = components['schemas']['CreateCustomerRequest'];
 export type CreateProposalRequest = components['schemas']['CreateProposalRequest'];
 export type CustomerResponse = components['schemas']['CustomerResponse'];
+export type DocumentResponse = components['schemas']['DocumentResponse'];
+export type DownloadResponse = components['schemas']['DownloadResponse'];
+export type OpinionResponse = components['schemas']['OpinionResponse'];
 export type PageResponseAuditEntryResponse =
   components['schemas']['PageResponseAuditEntryResponse'];
 export type PageResponseCustomerResponse = components['schemas']['PageResponseCustomerResponse'];
@@ -543,10 +752,15 @@ export type PageResponseProposalResponse = components['schemas']['PageResponsePr
 export type ProposalResponse = components['schemas']['ProposalResponse'];
 export type RevealDocumentRequest = components['schemas']['RevealDocumentRequest'];
 export type RevealedDocumentResponse = components['schemas']['RevealedDocumentResponse'];
+export type RiskFlag = components['schemas']['RiskFlag'];
+export type SignedRequest = components['schemas']['SignedRequest'];
 export type StatusChangeResponse = components['schemas']['StatusChangeResponse'];
+export type SuggestedPlan = components['schemas']['SuggestedPlan'];
+export type Summary = components['schemas']['Summary'];
 export type TransitionRequest = components['schemas']['TransitionRequest'];
 export type UpdateCustomerRequest = components['schemas']['UpdateCustomerRequest'];
 export type UpdateProposalRequest = components['schemas']['UpdateProposalRequest'];
+export type UploadResponse = components['schemas']['UploadResponse'];
 export type $defs = Record<string, never>;
 export interface operations {
   searchAudit: {
@@ -570,6 +784,9 @@ export interface operations {
           | 'PROPOSAL_APPROVED'
           | 'PROPOSAL_REJECTED'
           | 'PROPOSAL_RETURNED'
+          | 'PROPOSAL_OPINION_RECORDED'
+          | 'PROPOSAL_DOCUMENT_ADDED'
+          | 'PROPOSAL_DOCUMENT_DOWNLOADED'
           | 'SYSTEM_MIGRATION';
         from?: string;
         to?: string;
@@ -913,6 +1130,100 @@ export interface operations {
       };
     };
   };
+  listProposalDocuments: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description OK */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['DocumentResponse'][];
+        };
+      };
+    };
+  };
+  addProposalDocument: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['AddDocumentRequest'];
+      };
+    };
+    responses: {
+      /** @description Created */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['UploadResponse'];
+        };
+      };
+    };
+  };
+  confirmProposalDocument: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+        documentId: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description OK */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['DocumentResponse'];
+        };
+      };
+    };
+  };
+  downloadProposalDocument: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+        documentId: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description OK */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['DownloadResponse'];
+        };
+      };
+    };
+  };
   getProposalHistory: {
     parameters: {
       query?: never;
@@ -931,6 +1242,28 @@ export interface operations {
         };
         content: {
           'application/json': components['schemas']['StatusChangeResponse'][];
+        };
+      };
+    };
+  };
+  listProposalOpinions: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description OK */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['OpinionResponse'][];
         };
       };
     };

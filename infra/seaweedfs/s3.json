@@ -1,0 +1,9 @@
+{
+  "identities": [
+    {
+      "name": "creditdesk",
+      "credentials": [{ "accessKey": "creditdesk", "secretKey": "creditdesk-secret" }],
+      "actions": ["Admin", "Read", "Write", "List", "Tagging"]
+    }
+  ]
+}

@@ -5,6 +5,9 @@ import io.github.vanilds.creditdesk.audit.AuditService;
 import io.github.vanilds.creditdesk.audit.Changes;
 import io.github.vanilds.creditdesk.customer.Customer;
 import io.github.vanilds.creditdesk.customer.CustomerService;
+import io.github.vanilds.creditdesk.messaging.Outbox;
+import io.github.vanilds.creditdesk.messaging.Topology;
+import io.github.vanilds.creditdesk.proposal.document.ProposalDocumentRepository;
 import io.github.vanilds.creditdesk.shared.security.Actor;
 import io.github.vanilds.creditdesk.shared.web.ApiException;
 import io.github.vanilds.creditdesk.shared.web.ETags;
@@ -19,6 +22,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneId;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.UUID;
 
@@ -37,15 +41,20 @@ public class ProposalService {
     private final ProposalStatusChangeRepository history;
     private final CustomerService customers;
     private final AuditService audit;
+    private final Outbox outbox;
+    private final ProposalDocumentRepository documents;
     private final Clock clock;
     private final ZoneId businessZone;
 
     public ProposalService(ProposalRepository proposals, ProposalStatusChangeRepository history,
-                           CustomerService customers, AuditService audit, Clock clock, ZoneId businessZone) {
+                           CustomerService customers, AuditService audit, Outbox outbox,
+                           ProposalDocumentRepository documents, Clock clock, ZoneId businessZone) {
         this.proposals = proposals;
         this.history = history;
         this.customers = customers;
         this.audit = audit;
+        this.outbox = outbox;
+        this.documents = documents;
         this.clock = clock;
         this.businessZone = businessZone;
     }
@@ -111,9 +120,9 @@ public class ProposalService {
     }
 
     /**
-     * One transaction for the three writes: the new status, the history line and the audit line. Either all of
-     * them happen or none — there is no "approved but not audited" state. Phase 4 adds a fourth write here,
-     * the outbox row that tells RabbitMQ about the submission.
+     * One transaction for all the writes: the new status, the history line, the audit line and — on submit — the
+     * outbox row that will tell the AI worker. Either all of them happen or none: there is no "approved but not
+     * audited" state, and no "submitted but the worker never heard of it" state.
      */
     @Transactional
     public ProposalResponse transition(UUID id, ProposalAction action, String ifMatch, String rawReason,
@@ -128,7 +137,64 @@ public class ProposalService {
                 reason, now));
         audit.record(actor, action.auditAction, AUDIT_ENTITY, id,
                 new Changes().field("status", previous, proposal.getStatus()), reason);
+        if (action == ProposalAction.SUBMIT) {
+            outbox.add(AUDIT_ENTITY, id, Topology.PROPOSAL_SUBMITTED, submitted(proposal, now));
+        }
         return ProposalResponse.from(proposal);
+    }
+
+    /**
+     * The AI opinion for {@code submittedVersion} is stored: move the proposal to IN_ANALYSIS if it is still
+     * waiting at that version. Recorded like any other move (history + audit), with the worker as the actor.
+     *
+     * @return whether the status changed
+     */
+    @Transactional
+    public boolean startAnalysisAfterOpinion(UUID id, long submittedVersion) {
+        Proposal proposal = find(id);
+        Instant now = clock.instant();
+        if (!proposal.startAnalysisAutomatically(submittedVersion, now)) {
+            return false;
+        }
+        proposals.saveAndFlush(proposal);
+        Actor worker = Actor.system("ai-worker");
+        String reason = "AI credit opinion ready";
+        history.save(new ProposalStatusChange(id, ProposalStatus.SUBMITTED, ProposalStatus.IN_ANALYSIS, worker.id(),
+                worker.username(), reason, now));
+        audit.record(worker, AuditAction.PROPOSAL_ANALYSIS_STARTED, AUDIT_ENTITY, id,
+                new Changes().field("status", ProposalStatus.SUBMITTED, ProposalStatus.IN_ANALYSIS), reason);
+        return true;
+    }
+
+    /** When the proposal last entered SUBMITTED, or null if it never did. */
+    public Instant lastSubmittedAt(UUID id) {
+        Instant last = null;
+        for (ProposalStatusChange change : history.findByProposalIdOrderByChangedAtAscIdAsc(id)) {
+            if (change.getToStatus() == ProposalStatus.SUBMITTED) {
+                last = change.getChangedAt();
+            }
+        }
+        return last;
+    }
+
+    /** For the proposal's sub-resources (documents, opinions): 404 when it does not exist. */
+    public Proposal require(UUID id) {
+        return find(id);
+    }
+
+    private ProposalSubmitted submitted(Proposal proposal, Instant now) {
+        Customer customer = proposal.getCustomer();
+        Instant yearAgo = now.minus(365, ChronoUnit.DAYS);
+        var profile = new ProposalSubmitted.CustomerProfile(
+                customer.getType(),
+                customer.getMonthlyRevenue(),
+                LocalDate.ofInstant(customer.getCreatedAt(), businessZone),
+                proposals.countByCustomerIdAndStatusAndUpdatedAtGreaterThanEqual(customer.getId(), ProposalStatus.APPROVED, yearAgo),
+                proposals.countByCustomerIdAndStatusAndUpdatedAtGreaterThanEqual(customer.getId(), ProposalStatus.REJECTED, yearAgo),
+                proposals.countByCustomerIdAndStatusInAndIdNot(customer.getId(), ProposalStatus.OPEN, proposal.getId()));
+        return new ProposalSubmitted(proposal.getId(), proposal.getVersion(), proposal.getKind(), proposal.getAmount(),
+                proposal.getInstallments(), proposal.getMonthlyRate(), proposal.installmentAmount(), profile,
+                documents.availableCategories(proposal.getId()), now);
     }
 
     private Proposal find(UUID id) {

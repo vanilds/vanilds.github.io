@@ -15,7 +15,7 @@ import java.util.UUID;
 import java.util.regex.Pattern;
 
 /**
- * One id per request, from the browser to the audit log (and, in Phase 4, to the AI worker through RabbitMQ).
+ * One id per request, from the browser to the audit log and, through a RabbitMQ message header, to the AI worker.
  * The client may send {@code X-Correlation-Id}; otherwise one is generated. It goes into every log line (MDC),
  * into the response header and into each audit record, so a support ticket with one id finds everything.
  *

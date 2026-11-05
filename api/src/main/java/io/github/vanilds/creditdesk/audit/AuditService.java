@@ -24,7 +24,7 @@ import static io.github.vanilds.creditdesk.audit.AuditRepository.Filters.occurre
  *
  * <p><b>Same transaction, on purpose</b> ({@code MANDATORY}): if the audit insert fails, the business change rolls
  * back too, and vice versa. There is never an approved proposal without its audit line, nor an audit line for
- * something that did not happen. Publishing to a queue instead would need the outbox pattern (Phase 4).
+ * something that did not happen. (Events for other services follow the same idea: see messaging/Outbox.)
  *
  * <p><b>Why explicit calls instead of Hibernate Envers or entity listeners?</b> Envers records <i>rows</i> that
  * changed; an audit trail needs <i>intent</i>: "approved", "revealed CPF because of ticket 123", who and from which

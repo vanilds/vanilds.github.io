@@ -6,3 +6,10 @@ __pycache__/
 .venv/
 .env
 *.local.yaml
+
+# Python (ai-worker)
+__pycache__/
+*.egg-info/
+.venv/
+.pytest_cache/
+.ruff_cache/

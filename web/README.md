@@ -6,7 +6,7 @@ One Angular 22 workspace, three apps and one shared library:
 |---|---|---|---|
 | `shell` | 4200 | Portfolio, resume and the demo frame (header, login, navigation) | GitHub Pages — https://vanilds.github.io |
 | `mfe-customers` | 4201 | Customers: search, create, edit, delete, auditor CPF reveal | Cluster (Phase 6), `/mfe/customers/` |
-| `mfe-proposals` | 4202 | Proposals: filters, draft form with installment preview, workflow, status history | Cluster (Phase 6), `/mfe/proposals/` |
+| `mfe-proposals` | 4202 | Proposals: filters, draft form with installment preview, workflow, status history, AI opinion (polled after submit), documents (presigned S3 upload) | Cluster (Phase 6), `/mfe/proposals/` |
 | `shared` | — | `@creditdesk/shared`: login, API client, i18n, problem banner, pager, status badge | Inside each app, loaded once |
 
 ## Run it (Codespaces)

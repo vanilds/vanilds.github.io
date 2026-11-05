@@ -26,6 +26,15 @@ public record Actor(String id, String username, Set<Role> roles) {
         roles = roles.isEmpty() ? Set.of() : Set.copyOf(EnumSet.copyOf(roles));
     }
 
+    /**
+     * A process acting on its own, e.g. the AI worker moving a proposal to IN_ANALYSIS. No roles: it can only do
+     * what the code explicitly does on its behalf. The "system:" prefix can never be a Keycloak id (those are UUIDs),
+     * so the audit log tells people and processes apart.
+     */
+    public static Actor system(String name) {
+        return new Actor("system:" + name, name, Set.of());
+    }
+
     public boolean has(Role role) {
         return roles.contains(role);
     }

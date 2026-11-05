@@ -22,6 +22,13 @@ export type CreateCustomer = Api.CreateCustomerRequest;
 export type UpdateCustomer = Api.UpdateCustomerRequest;
 export type CreateProposal = Api.CreateProposalRequest;
 export type UpdateProposal = Api.UpdateProposalRequest;
+export type Opinion = Required<Api.OpinionResponse>;
+export type RiskFlag = Api.RiskFlag;
+export type ProposalDocument = Required<Api.DocumentResponse>;
+export type DocumentCategory = ProposalDocument['category'];
+export type AddDocument = Api.AddDocumentRequest;
+export type SignedRequest = Required<Api.SignedRequest>;
+export type Download = Required<Api.DownloadResponse>;
 
 export interface Page<T> {
   content: T[];
@@ -148,6 +155,50 @@ export class ProposalsApi {
     return this.http
       .put<Proposal>(`${this.base}/${id}`, body, { observe: 'response', headers: ifMatch(etag) })
       .pipe(map(versioned));
+  }
+
+  /** AI opinions, newest first. Empty while the worker is still drafting (the screen polls). */
+  opinions(id: string): Observable<Opinion[]> {
+    return this.http.get<Opinion[]>(`${this.base}/${id}/opinions`);
+  }
+
+  documents(id: string): Observable<ProposalDocument[]> {
+    return this.http.get<ProposalDocument[]>(`${this.base}/${id}/documents`);
+  }
+
+  /** Step 1 of an upload: the API checks the rules and answers with a presigned S3 URL. */
+  addDocument(
+    id: string,
+    body: AddDocument,
+  ): Observable<{ document: ProposalDocument; upload: SignedRequest }> {
+    return this.http.post<{ document: ProposalDocument; upload: SignedRequest }>(
+      `${this.base}/${id}/documents`,
+      body,
+    );
+  }
+
+  /**
+   * Step 2: the file goes straight from the browser to S3, never through the API. No Authorization header here
+   * (the auth interceptor only adds it to API URLs): the signature in the URL is the permission.
+   */
+  uploadToStorage(upload: SignedRequest, file: Blob): Observable<unknown> {
+    return this.http.request(upload.method, upload.url, {
+      body: file,
+      headers: new HttpHeaders(upload.headers),
+    });
+  }
+
+  /** Step 3: the API checks the object in S3 (size and type) and makes it available. */
+  confirmDocument(id: string, documentId: string): Observable<ProposalDocument> {
+    return this.http.post<ProposalDocument>(
+      `${this.base}/${id}/documents/${documentId}/confirm`,
+      null,
+    );
+  }
+
+  /** A short-lived download link. Audited on the API side, which is why it is a POST. */
+  downloadLink(id: string, documentId: string): Observable<Download> {
+    return this.http.post<Download>(`${this.base}/${id}/documents/${documentId}/download`, null);
   }
 
   transition(

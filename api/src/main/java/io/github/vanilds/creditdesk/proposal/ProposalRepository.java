@@ -27,6 +27,11 @@ public interface ProposalRepository extends JpaRepository<Proposal, UUID>, JpaSp
 
     boolean existsByCustomerIdAndStatusIn(UUID customerId, Collection<ProposalStatus> statuses);
 
+    /** Decisions are final, so the last update of an APPROVED/REJECTED proposal is when it was decided. */
+    long countByCustomerIdAndStatusAndUpdatedAtGreaterThanEqual(UUID customerId, ProposalStatus status, Instant since);
+
+    long countByCustomerIdAndStatusInAndIdNot(UUID customerId, Collection<ProposalStatus> statuses, UUID excludedId);
+
     /** Filters for GET /api/proposals. A null value skips the filter. */
     final class Filters {
 
