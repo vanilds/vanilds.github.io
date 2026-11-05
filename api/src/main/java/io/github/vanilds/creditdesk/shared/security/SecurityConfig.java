@@ -3,11 +3,14 @@ package io.github.vanilds.creditdesk.shared.security;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
+import io.github.vanilds.creditdesk.shared.web.CorrelationIdFilter;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.security.access.hierarchicalroles.RoleHierarchy;
 import org.springframework.security.access.hierarchicalroles.RoleHierarchyImpl;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
+import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.oauth2.core.DelegatingOAuth2TokenValidator;
@@ -20,6 +23,12 @@ import org.springframework.security.oauth2.jwt.JwtValidators;
 import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.web.cors.CorsConfiguration;
+import org.springframework.web.cors.CorsConfigurationSource;
+import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
+
+import java.time.Duration;
+import java.util.List;
 
 /**
  * The API is a stateless OAuth2 <b>resource server</b>: it never sees a password. Keycloak signs a JWT, the
@@ -47,6 +56,7 @@ public class SecurityConfig {
         authentication.setJwtGrantedAuthoritiesConverter(new KeycloakRolesConverter());
 
         http
+                .cors(Customizer.withDefaults()) // uses the CorsConfigurationSource bean below
                 .csrf(csrf -> csrf.disable())
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
@@ -67,6 +77,32 @@ public class SecurityConfig {
                         .authenticationEntryPoint(problems)
                         .accessDeniedHandler(problems));
         return http.build();
+    }
+
+    /**
+     * CORS: the Angular apps live on other origins (GitHub Pages, {@code localhost:4200-4202}), so the browser
+     * asks before every call with a token or {@code If-Match} (preflight {@code OPTIONS}).
+     * <ul>
+     *   <li>Origins are an explicit list from configuration, never {@code *}.</li>
+     *   <li>No cookies ({@code allowCredentials=false}): the token travels in a header the front adds itself.</li>
+     *   <li>{@code exposedHeaders}: by default JavaScript cannot read {@code ETag}. Without exposing it, the
+     *   front could never send {@code If-Match} and every edit would end in 428.</li>
+     * </ul>
+     */
+    @Bean
+    CorsConfigurationSource corsConfigurationSource(
+            @Value("${creditdesk.cors.allowed-origins}") List<String> allowedOrigins) {
+        var cors = new CorsConfiguration();
+        cors.setAllowedOrigins(allowedOrigins);
+        cors.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
+        cors.setAllowedHeaders(List.of(HttpHeaders.AUTHORIZATION, HttpHeaders.CONTENT_TYPE, HttpHeaders.IF_MATCH,
+                CorrelationIdFilter.HEADER));
+        cors.setExposedHeaders(List.of(HttpHeaders.ETAG, HttpHeaders.LOCATION, CorrelationIdFilter.HEADER));
+        cors.setAllowCredentials(false);
+        cors.setMaxAge(Duration.ofHours(1)); // the browser caches the preflight answer
+        var source = new UrlBasedCorsConfigurationSource();
+        source.registerCorsConfiguration("/api/**", cors);
+        return source;
     }
 
     /** A manager can do everything an analyst can. Declared once instead of repeating "ANALYST or MANAGER". */

@@ -1,0 +1,22 @@
+@use 'creditdesk';
+
+@include creditdesk.tokens;
+@include creditdesk.base;
+@include creditdesk.controls;
+
+// The portfolio prints as a clean, light resume (Resume page → "Download PDF" uses the browser's print to PDF)
+@media print {
+  :root {
+    --bg: #fff;
+    --surface: #fff;
+    --ink: #111;
+    --muted: #444;
+    --line: #ddd;
+    --orange: #b45309;
+    --sky: #1d4ed8;
+    color-scheme: light;
+  }
+  .no-print {
+    display: none !important;
+  }
+}

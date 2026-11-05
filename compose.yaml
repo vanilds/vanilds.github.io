@@ -1,6 +1,7 @@
 # Local stack for development: `docker compose up --build`
 # API on http://localhost:8080 (Swagger UI: /swagger-ui.html), Keycloak on http://localhost:8180, PostgreSQL on 5432.
 # Demo users and how to get a token: infra/keycloak/README.md. Requests ready to send: api/requests.http.
+# Front-end (shell + micro frontends): cd web && npm run start:all → http://localhost:4200 (web/README.md).
 # Grows phase by phase (Keycloak, RabbitMQ, MinIO, worker); Kubernetes manifests live in k8s/.
 name: creditdesk
 

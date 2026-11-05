@@ -335,8 +335,8 @@ How to run it, the demo users and the design decisions are in [`api/README.md`](
 
 | Layer | Choice | Why it's here |
 |---|---|---|
-| Portfolio + shell | Angular 18+, Native Federation host, signals, GitHub Pages | Always-on showcase; loads the demo remotes at runtime with an offline fallback |
-| Micro frontends | `mfe-customers`, `mfe-proposals` (Angular, Material) | The architecture I use daily at the bank, built from scratch |
+| Portfolio + shell | Angular 22, Native Federation host, signals, GitHub Pages | Always-on showcase; loads the demo remotes only when the demo is opened, with an offline fallback |
+| Micro frontends | `mfe-customers`, `mfe-proposals` (Angular, standalone + signals), shared `@creditdesk/shared` singleton | The architecture I use daily at the bank, built from scratch; types generated from `api/openapi.yaml` |
 | Auth | Keycloak (OIDC, PKCE, realm roles) | Same flow as corporate SSO / Entra ID |
 | API | Java 21, Spring Boot 3, Spring Security, Spring Data JPA, Flyway, Bean Validation, springdoc, AWS SDK v2 | Layered design, validation, migrations, contracts, optimistic locking, transactional outbox |
 | Async | RabbitMQ (topic exchange, retry + dead-letter queues) | AI opinion is slow; the UI must not wait for it |
@@ -354,10 +354,12 @@ How to run it, the demo users and the design decisions are in [`api/README.md`](
 
 ```
 vanilds.github.io/
-├── frontend/
-│   ├── shell/            # portfolio + resume + demo host → GitHub Pages
-│   ├── mfe-customers/    # remote → EC2
-│   └── mfe-proposals/    # remote → EC2
+├── web/                  # Angular workspace (README inside)
+│   └── projects/
+│       ├── shell/        # portfolio + resume + demo host → GitHub Pages
+│       ├── mfe-customers/# remote → EC2
+│       ├── mfe-proposals/# remote → EC2
+│       └── shared/       # auth, API client (generated types), i18n, UI bits — shared as a singleton
 ├── api/                  # Spring Boot service + openapi.yaml
 ├── ai-worker/            # Python LangGraph worker
 ├── k8s/
@@ -378,7 +380,7 @@ vanilds.github.io/
 
 - [x] **Phase 1 — CRUD backend**: customers and proposals in Spring Boot, Postgres + Flyway, CPF/CNPJ validation, pagination and filters, RFC 9457 errors, OpenAPI, Testcontainers, `docker compose up` in Codespaces.
 - [x] **Phase 2 — Security & workflow**: Keycloak realm with `ANALYST`/`MANAGER`/`AUDITOR`, JWT resource server, workflow with ownership and four-eyes, optimistic locking with `ETag`/`If-Match`, append-only audit log, CPF/CNPJ encrypted at rest, data masking.
-- [ ] **Phase 3 — Portfolio & micro frontends**: shell with portfolio + resume on GitHub Pages, `mfe-customers` + `mfe-proposals` with Native Federation, offline fallback, clients generated from OpenAPI.
+- [x] **Phase 3 — Portfolio & micro frontends**: shell with portfolio + resume on GitHub Pages, `mfe-customers` + `mfe-proposals` with Native Federation, offline fallback, clients generated from OpenAPI.
 - [ ] **Phase 4 — Events, AI & S3**: transactional outbox → RabbitMQ, retry/DLQ, idempotent LangGraph worker, presigned S3 uploads.
 - [ ] **Phase 5 — Kubernetes locally**: kind in Codespaces with Ingress, probes, limits, HPA.
 - [ ] **Phase 6 — AWS**: EC2 + k3s, IAM role, S3 buckets, SSM secrets, Budgets, TLS, GitHub Actions with OIDC, Argo CD, scheduled start/stop.

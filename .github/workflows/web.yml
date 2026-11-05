@@ -1,0 +1,82 @@
+name: Web
+
+# Front-end: the shell (portfolio + demo host) and the two micro frontends.
+# Every PR: generated API types up to date, unit tests, production builds.
+# main: the shell is published to GitHub Pages (https://vanilds.github.io).
+# The micro frontends are built here but deployed to the cluster with the API (Phase 6).
+
+on:
+  push:
+    branches: [main]
+    paths: ["web/**", "api/openapi.yaml", ".github/workflows/web.yml"]
+  pull_request:
+    paths: ["web/**", "api/openapi.yaml", ".github/workflows/web.yml"]
+  workflow_dispatch: # publish the site by hand (Actions → Web → Run workflow)
+
+permissions:
+  contents: read
+
+concurrency:
+  group: web-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: web
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - run: npm ci
+
+      # The TypeScript types are generated from api/openapi.yaml. If the API contract changed and nobody
+      # regenerated them, the front would compile against an API that no longer exists.
+      - name: API types match api/openapi.yaml
+        run: |
+          npm run api:types
+          if ! git diff --exit-code -- projects/shared/src/lib/api/schema.ts; then
+            echo "::error file=web/projects/shared/src/lib/api/schema.ts::Run 'npm run api:types' in web/ and commit the result."
+            exit 1
+          fi
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Production builds (micro frontends, then shell)
+        run: npm run build
+
+      # GitHub Pages has no server-side routing: a deep link such as /resume or the login callback /demo?code=…
+      # would be a 404. Serving the app as the 404 page lets Angular's router take over.
+      - name: Prepare the site
+        run: |
+          cp dist/shell/browser/index.html dist/shell/browser/404.html
+          touch dist/shell/browser/.nojekyll
+
+      - uses: actions/upload-pages-artifact@v3
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        with:
+          path: web/dist/shell/browser
+
+  deploy:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write      # publish to GitHub Pages
+      id-token: write   # Pages verifies the run with an OIDC token (same idea as the AWS role)
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

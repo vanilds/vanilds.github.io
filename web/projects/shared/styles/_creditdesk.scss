@@ -1,0 +1,238 @@
+// Design tokens shared by the shell and the micro frontends.
+// Same look as the README diagrams and the LinkedIn carousel: navy grid, orange mono kicker, heavy white titles.
+// Each app's styles.scss does `@use 'creditdesk'` once. Components only use the CSS custom properties.
+
+@mixin tokens {
+  :root {
+    --bg: #0a1020;
+    --bg-raised: #0f182c;
+    --surface: #111a2e;
+    --surface-2: #16213a;
+    --line: #1d2742;
+    --line-strong: #2a3654;
+    --ink: #e8eef8;
+    --muted: #8b9bb8;
+    --faint: #5b6b8c;
+    --orange: #f5a03a;
+    --orange-ink: #1a1203;
+    --sky: #38bdf8;
+    --green: #4ade80;
+    --red: #f87171;
+    --yellow: #facc15;
+    --violet: #a78bfa;
+
+    --font: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+    --mono: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace;
+
+    --radius: 10px;
+    --radius-sm: 6px;
+    --gutter: clamp(16px, 4vw, 40px);
+    --max: 1120px;
+    color-scheme: dark;
+  }
+}
+
+@mixin base {
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+  }
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--font);
+    font-size: 16px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+  a {
+    color: var(--sky);
+    text-underline-offset: 3px;
+  }
+  :focus-visible {
+    outline: 2px solid var(--orange);
+    outline-offset: 2px;
+  }
+  h1,
+  h2,
+  h3 {
+    line-height: 1.1;
+    letter-spacing: -0.02em;
+    margin: 0;
+  }
+  .kicker {
+    font-family: var(--mono);
+    color: var(--orange);
+    letter-spacing: 0.22em;
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+  }
+  .muted {
+    color: var(--muted);
+  }
+  .mono {
+    font-family: var(--mono);
+  }
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    * {
+      animation: none !important;
+      transition: none !important;
+    }
+  }
+}
+
+// Back-office controls (forms, tables, buttons) used by the demo screens.
+@mixin controls {
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    border: 1px solid var(--line-strong);
+    background: var(--surface-2);
+    color: var(--ink);
+    font: 600 14px/1 var(--font);
+    padding: 10px 14px;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    text-decoration: none;
+    white-space: nowrap;
+  }
+  .btn:hover:not(:disabled) {
+    border-color: var(--muted);
+  }
+  .btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  .btn-primary {
+    background: var(--orange);
+    border-color: var(--orange);
+    color: var(--orange-ink);
+  }
+  .btn-primary:hover:not(:disabled) {
+    border-color: var(--ink);
+  }
+  .btn-danger {
+    color: var(--red);
+  }
+  .btn-ghost {
+    background: transparent;
+    border-color: transparent;
+    color: var(--muted);
+  }
+
+  .field {
+    display: grid;
+    gap: 6px;
+    font-size: 13px;
+    color: var(--muted);
+  }
+  .field .error {
+    color: var(--red);
+    font-size: 12px;
+  }
+  input,
+  select,
+  textarea {
+    font: 14px/1.4 var(--font);
+    color: var(--ink);
+    background: var(--bg-raised);
+    border: 1px solid var(--line-strong);
+    border-radius: var(--radius-sm);
+    padding: 9px 11px;
+    width: 100%;
+    min-width: 0;
+  }
+  input:focus,
+  select:focus,
+  textarea:focus {
+    border-color: var(--sky);
+    outline: none;
+  }
+  input[aria-invalid='true'] {
+    border-color: var(--red);
+  }
+
+  .table-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--surface);
+  }
+  table.grid {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+  }
+  table.grid th {
+    text-align: left;
+    font: 700 11px/1 var(--mono);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--muted);
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--line);
+    white-space: nowrap;
+  }
+  table.grid td {
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--line);
+    vertical-align: middle;
+  }
+  table.grid tr:last-child td {
+    border-bottom: 0;
+  }
+  table.grid tbody tr:hover {
+    background: var(--surface-2);
+  }
+  table.grid .num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 20px;
+  }
+  .page-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: end;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 20px;
+  }
+  .page-head h1 {
+    font-size: 28px;
+    font-weight: 800;
+    margin-top: 6px;
+  }
+  .toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    align-items: end;
+    margin-bottom: 16px;
+  }
+  .toolbar .field {
+    min-width: 160px;
+    flex: 1 1 160px;
+  }
+}
