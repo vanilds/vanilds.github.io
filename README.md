@@ -95,7 +95,7 @@ flowchart TB
     apps -- "presigned URLs" --> s3docs
     cron --> s3bkp
     role -. "temporary credentials via IMDSv2" .-> apps
-    ssm -. "read at deploy" .-> apps
+    ssm -. "External Secrets (instance role)" .-> apps
     sched -. "ec2:StartInstances / StopInstances (OIDC role)" .-> ec2
 ```
 
@@ -312,7 +312,7 @@ sequenceDiagram
     A->>F: Choose file (PDF, JPEG or PNG, max 10 MB)
     F->>API: POST /api/proposals/{id}/documents {category, fileName, contentType, sizeBytes}
     API->>API: owner? DRAFT? type, size, max 10 per proposal
-    API-->>F: 201 + presigned PUT URL (5 min; Content-Type and Content-Length are signed)
+    API-->>F: 201 + presigned PUT URL (5 min, Content-Type and Content-Length are signed)
     F->>S3: PUT file directly (never passes through the API)
     F->>API: POST /api/proposals/{id}/documents/{docId}/confirm
     API->>S3: HEAD object (exists? same size and type?)
@@ -381,12 +381,30 @@ Port **8088** opens the whole demo (`/` shell, `/demo`, `/api`, `/auth`, `/mfe/*
 | **No `replicas` in Deployments the autoscalers own** | Otherwise every `kubectl apply` / Argo CD sync would reset what the HPA chose. |
 | **Graceful shutdown**: `preStop` sleep → SIGTERM → Spring finishes in-flight requests | The Ingress needs a few seconds to stop routing to a terminating pod; without the pause, rollouts drop requests. `maxUnavailable: 0` keeps capacity during rollouts. |
 | **Non-root, read-only root filesystem, all capabilities dropped** | Numeric uids (`10001`, nginx `101`) so `runAsNonRoot` can verify them; only `/tmp` is writable (an `emptyDir`). |
-| **Kustomize generators for config, secrets and the realm** | Content hash in the name: change a value and the pods that use it roll automatically. Secrets are random per environment (`up.sh`, git-ignored); on AWS they will come from SSM. |
-| **Images loaded into kind, no registry** | `kind load docker-image` + `imagePullPolicy: IfNotPresent`: nothing to publish to try the system locally. GHCR multi-arch images come with Phase 6. |
+| **Kustomize generators for config, secrets and the realm** | Content hash in the name: change a value and the pods that use it roll automatically. Secrets are random per environment (`up.sh`, git-ignored); on AWS they come from SSM through External Secrets. |
+| **Images loaded into kind, no registry** | `kind load docker-image` + `imagePullPolicy: IfNotPresent`: nothing to publish to try the system locally. On AWS: multi-arch images from GHCR (next section). |
 
 ---
 
-## 8. Tech stack
+## 8. Running it on AWS (k3s + Argo CD)
+
+Merging to `main` is the deployment: `.github/workflows/images.yml` builds the five images for amd64 and arm64, pushes them to GHCR as `sha-<commit>` and commits that tag to `k8s/overlays/aws`. Argo CD, running in the cluster, sees the commit and rolls the Deployments. Step-by-step setup and operations: [docs/aws.md](docs/aws.md).
+
+| Decision | Why |
+|---|---|
+| **GitOps with Argo CD, app of apps** | The EC2 bootstrap installs only k3s and Argo CD and applies one `root` Application; everything else (cert-manager, External Secrets, KEDA, issuers, CreditDesk) is a file in `k8s/argocd/apps`. Manual changes are reverted (`selfHeal`); the whole server can be recreated from git in ~15 minutes. |
+| **CI pushes images, Git deploys them** | GitHub Actions never touches the cluster (no kubeconfig, no inbound port). A release is a commit, so the history of what ran in production is `git log k8s/overlays/aws`, and a rollback is `git revert`. |
+| **One tag for all five images** | A release is a set of images tested together. Unchanged images rebuild from cache in seconds. |
+| **Multi-arch without slow emulation** | Java and Angular compile on the runner's own CPU (`--platform=$BUILDPLATFORM`); only the final layers are assembled per architecture. The same images run in Codespaces (amd64) and on the t4g instance (arm64). |
+| **Secrets: SSM Parameter Store → External Secrets** | Values are generated once in CloudShell and stored KMS-encrypted; External Secrets copies them into the `creditdesk-secrets` Secret with the instance role. Nothing secret in git, in CI or in the bootstrap script. Never overwritten: the CPF/CNPJ encryption key cannot change without a migration. |
+| **Real S3 with the instance role** | The API gets no endpoint and no keys: the AWS SDK takes temporary credentials from the metadata service (IMDSv2, hop limit 2). Presigned URLs point straight at S3; the bucket's CORS allows only the two front-end origins. |
+| **TLS: cert-manager + Let's Encrypt (HTTP-01)** | Free, renewed automatically. The http → https redirect is a Traefik middleware on the app's Ingress only, so the ACME challenge on port 80 keeps working. |
+| **Fits on one 4 GB node** | Argo CD without Dex, notifications and ApplicationSet; External Secrets and KEDA without their validating webhooks (manifests are validated in CI instead); smaller memory requests for the apps; 2 GB swap as the safety net. |
+| **Server found by tag, not by id** | The start/stop workflow and the IAM policy use the `Project=creditdesk` tag, so recreating the instance changes nothing else. |
+
+---
+
+## 9. Tech stack
 
 | Layer | Choice | Why it's here |
 |---|---|---|
@@ -405,7 +423,7 @@ Port **8088** opens the whole demo (`/` shell, `/demo`, `/api`, `/auth`, `/mfe/*
 
 ---
 
-## 9. Repository layout
+## 10. Repository layout
 
 ```
 vanilds.github.io/
@@ -420,11 +438,13 @@ vanilds.github.io/
 ├── k8s/
 │   ├── base/             # Kustomize base manifests
 │   ├── local/            # up.sh · smoke.sh · down.sh for the kind cluster
-│   └── overlays/
-│       ├── local/        # kind in Codespaces and CI (SeaweedFS stands in for S3)
-│       └── aws/          # k3s on EC2 (real S3, TLS, smaller limits)
-├── infra/aws/            # EC2 bootstrap, IAM policies, budget, start/stop scripts
-├── docs/diagrams/        # branded PNGs + their sources (render.mjs, specs.py)
+│   ├── overlays/
+│   │   ├── local/        # kind in Codespaces and CI (SeaweedFS stands in for S3)
+│   │   └── aws/          # k3s on EC2 (GHCR images, real S3, TLS, secrets from SSM, smaller limits)
+│   ├── argocd/           # root Application + one Application per add-on / app (GitOps)
+│   └── platform/         # cluster-wide objects: Let's Encrypt issuers
+├── infra/aws/            # AWS setup, secrets, EC2 bootstrap (k3s + Argo CD), IAM policies (CloudShell scripts)
+├── docs/                 # aws.md runbook · diagrams/ (branded PNGs + their sources)
 ├── .devcontainer/        # one-click Codespaces environment
 ├── compose.yaml          # local stack: docker compose up --build
 └── .github/workflows/
@@ -432,14 +452,14 @@ vanilds.github.io/
 
 ---
 
-## 10. Roadmap
+## 11. Roadmap
 
 - [x] **Phase 1 — CRUD backend**: customers and proposals in Spring Boot, Postgres + Flyway, CPF/CNPJ validation, pagination and filters, RFC 9457 errors, OpenAPI, Testcontainers, `docker compose up` in Codespaces.
 - [x] **Phase 2 — Security & workflow**: Keycloak realm with `ANALYST`/`MANAGER`/`AUDITOR`, JWT resource server, workflow with ownership and four-eyes, optimistic locking with `ETag`/`If-Match`, append-only audit log, CPF/CNPJ encrypted at rest, data masking.
 - [x] **Phase 3 — Portfolio & micro frontends**: shell with portfolio + resume on GitHub Pages, `mfe-customers` + `mfe-proposals` with Native Federation, offline fallback, clients generated from OpenAPI.
 - [x] **Phase 4 — Events, AI & S3**: transactional outbox → RabbitMQ with publisher confirms, retry and dead-letter queues, idempotent consumers on both sides, LangGraph worker (rules decide, the model only writes, guardrails check), presigned S3 uploads and audited downloads.
 - [x] **Phase 5 — Kubernetes locally**: kind in Codespaces and CI, one Traefik Ingress for every app (presigned S3 URLs included), startup/readiness/liveness probes, requests/limits, non-root read-only pods, HPA for the API, KEDA scaling the worker from zero on queue length, end-to-end smoke test in CI.
-- [ ] **Phase 6 — AWS**: EC2 + k3s, IAM role, S3 buckets, SSM secrets, Budgets, TLS, GitHub Actions with OIDC, Argo CD, scheduled start/stop.
+- [ ] **Phase 6 — AWS**: multi-arch images on GHCR, GitOps with Argo CD (app of apps), k3s on EC2 with Traefik + Let's Encrypt, secrets from SSM through External Secrets, real S3 with the instance role, recreate-from-git bootstrap, start/stop by tag.
 - [ ] **Phase 7 — Operations**: Prometheus/Grafana dashboards, tracing by correlation-id, daily backups to S3 and a tested restore, incident drills written up in `docs/`.
 
 ---

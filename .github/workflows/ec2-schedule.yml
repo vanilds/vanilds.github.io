@@ -43,16 +43,30 @@ jobs:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: us-east-1
 
+      # Found by its Project tag, not by a stored id: recreating the server (infra/aws/recreate-ec2.sh) changes
+      # the id, and nothing here has to be updated. The role may only start/stop instances with that tag.
+      - name: Find the instance
+        id: find
+        run: |
+          ids=$(aws ec2 describe-instances \
+            --filters Name=tag:Project,Values=creditdesk Name=instance-state-name,Values=pending,running,stopping,stopped \
+            --query 'Reservations[].Instances[].InstanceId' --output text)
+          if [ "$(wc -w <<<"$ids")" != 1 ]; then
+            echo "::error::Expected exactly one CreditDesk instance, found: '${ids}'"
+            exit 1
+          fi
+          echo "id=$ids" >> "$GITHUB_OUTPUT"
+
       - name: Start instance
         if: steps.decide.outputs.action == 'start'
         run: |
-          aws ec2 start-instances --instance-ids "${{ vars.EC2_INSTANCE_ID }}"
-          aws ec2 wait instance-running --instance-ids "${{ vars.EC2_INSTANCE_ID }}"
+          aws ec2 start-instances --instance-ids "${{ steps.find.outputs.id }}"
+          aws ec2 wait instance-running --instance-ids "${{ steps.find.outputs.id }}"
           echo "Demo server is running. DNS updates itself on boot (~1 min)."
 
       - name: Stop instance
         if: steps.decide.outputs.action == 'stop'
         run: |
-          aws ec2 stop-instances --instance-ids "${{ vars.EC2_INSTANCE_ID }}"
-          aws ec2 wait instance-stopped --instance-ids "${{ vars.EC2_INSTANCE_ID }}"
+          aws ec2 stop-instances --instance-ids "${{ steps.find.outputs.id }}"
+          aws ec2 wait instance-stopped --instance-ids "${{ steps.find.outputs.id }}"
           echo "Demo server stopped."

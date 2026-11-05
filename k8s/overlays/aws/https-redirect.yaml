@@ -1,0 +1,12 @@
+# http://creditdesk.duckdns.org/... → https://... (permanent). Used by the creditdesk Ingress only (annotation in
+# kustomization.yaml), so Let's Encrypt's HTTP-01 challenge, served by cert-manager's own temporary Ingress, is
+# still answered over plain http. A request that is already https passes through unchanged.
+# Traefik-specific on purpose and only in this overlay: the standard Ingress API has no redirect.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: https-redirect
+spec:
+  redirectScheme:
+    scheme: https
+    permanent: true

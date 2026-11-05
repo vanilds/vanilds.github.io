@@ -1,0 +1,33 @@
+# Let's Encrypt issuers. The Ingress uses "letsencrypt" (k8s/overlays/aws). "letsencrypt-staging" issues
+# untrusted certificates with much higher rate limits: switch the Ingress annotation to it while experimenting,
+# so a broken loop does not hit the production limit (5 identical certificates per week).
+# HTTP-01: Let's Encrypt fetches http://creditdesk.duckdns.org/.well-known/acme-challenge/<token>, which
+# cert-manager serves through a temporary Ingress (Traefik), so port 80 must stay open in the security group.
+# No e-mail: Let's Encrypt no longer sends expiry e-mails, and cert-manager renews by itself.
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true   # until cert-manager's CRDs exist
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    privateKeySecretRef: { name: letsencrypt-account }
+    solvers:
+      - http01:
+          ingress: { ingressClassName: traefik }
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-staging
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  acme:
+    server: https://acme-staging-v02.api.letsencrypt.org/directory
+    privateKeySecretRef: { name: letsencrypt-staging-account }
+    solvers:
+      - http01:
+          ingress: { ingressClassName: traefik }

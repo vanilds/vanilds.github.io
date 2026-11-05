@@ -8,9 +8,9 @@ name: Kubernetes
 on:
   push:
     branches: [main]
-    paths: ["k8s/**", "api/**", "ai-worker/**", "web/**", "infra/keycloak/**", ".github/workflows/k8s.yml"]
+    paths: ["k8s/**", "api/**", "ai-worker/**", "web/**", "infra/keycloak/**", "infra/aws/k3s/**", ".github/workflows/k8s.yml"]
   pull_request:
-    paths: ["k8s/**", "api/**", "ai-worker/**", "web/**", "infra/keycloak/**", ".github/workflows/k8s.yml"]
+    paths: ["k8s/**", "api/**", "ai-worker/**", "web/**", "infra/keycloak/**", "infra/aws/k3s/**", ".github/workflows/k8s.yml"]
   workflow_dispatch:
 
 permissions:
@@ -33,13 +33,17 @@ jobs:
           echo "PUBLIC_URL=http://localhost:8088" > k8s/overlays/local/local.env
           cp k8s/base/secrets.example.env k8s/overlays/local/secrets.env
           kubectl kustomize k8s/overlays/local > rendered.yaml
-      - name: Validate against the Kubernetes and KEDA schemas
+      - name: Render the aws overlay and the Argo CD apps
+        run: |
+          kubectl kustomize k8s/overlays/aws > rendered-aws.yaml
+          for f in k8s/argocd/root.yaml k8s/argocd/apps/*.yaml k8s/platform/*.yaml infra/aws/k3s/*.yaml; do echo ---; cat "$f"; done > rendered-gitops.yaml
+      - name: Validate against the Kubernetes and CRD schemas (KEDA, External Secrets, cert-manager, Traefik, Argo CD)
         run: |
           go install github.com/yannh/kubeconform/cmd/kubeconform@v0.7.0
           ~/go/bin/kubeconform -strict -summary -kubernetes-version 1.34.0 \
             -schema-location default \
             -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
-            rendered.yaml
+            rendered.yaml rendered-aws.yaml rendered-gitops.yaml
 
   e2e:
     name: kind + smoke test
