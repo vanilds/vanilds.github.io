@@ -17,19 +17,19 @@ resources:
 images:
   - name: creditdesk-api
     newName: ghcr.io/vanilds/creditdesk-api
-    newTag: main
+    newTag: sha-9763f83
   - name: creditdesk-ai-worker
     newName: ghcr.io/vanilds/creditdesk-ai-worker
-    newTag: main
+    newTag: sha-9763f83
   - name: creditdesk-shell
     newName: ghcr.io/vanilds/creditdesk-shell
-    newTag: main
+    newTag: sha-9763f83
   - name: creditdesk-mfe-customers
     newName: ghcr.io/vanilds/creditdesk-mfe-customers
-    newTag: main
+    newTag: sha-9763f83
   - name: creditdesk-mfe-proposals
     newName: ghcr.io/vanilds/creditdesk-mfe-proposals
-    newTag: main
+    newTag: sha-9763f83
 
 configMapGenerator:
   - name: creditdesk-config
