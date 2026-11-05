@@ -23,6 +23,7 @@ spec:
     metadata:
       labels: { app: seaweedfs }
     spec:
+      enableServiceLinks: false      # no legacy <SERVICE>_PORT variables (see k8s/base/kustomization.yaml)
       initContainers:
         # SeaweedFS reads S3 identities from a JSON file: build it from the Secret
         - name: s3-config

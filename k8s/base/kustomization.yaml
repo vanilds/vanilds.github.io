@@ -47,3 +47,15 @@ configMapGenerator:
 # Declared here, and not only in the overlays, so kustomize can rename every reference to it with the hash.
 secretGenerator:
   - name: creditdesk-secrets
+
+# Kubernetes injects <SERVICE>_PORT=tcp://10.96.x.x:5672 (and _HOST, _PORT_5672_TCP...) for every Service of the
+# namespace into every pod: the legacy Docker-links format. Our own settings use the same names (RABBITMQ_PORT,
+# POSTGRES_..., KEYCLOAK_...), so the API read "tcp://10.96.130.99:5672" as a port number and crashed. Services
+# are found by DNS (rabbitmq, postgres...), so the injection is switched off for every pod.
+patches:
+  - target: { kind: "Deployment|StatefulSet" }
+    patch: |-
+      - op: add
+        path: /spec/template/spec/enableServiceLinks
+        value: false
+
