@@ -35,13 +35,13 @@ Everything is installed by Argo CD from `k8s/argocd/apps/monitoring.yaml`. Value
 
 ### Memory budget
 
-The node has 4 GB and ran at ~700 MB available before Phase 7. Monitoring reserves ~350 MiB (requests) and is
-limited to ~900 MiB in the worst case:
+The node has 4 GB and ran at ~700 MB available before Phase 7. Monitoring reserves ~420 MiB (requests) and is
+limited to ~1 GiB in the worst case:
 
 | Pod | Request | Limit | What was given up for it |
 |---|---|---|---|
 | Prometheus | 192 Mi | 448 Mi | 30 s scrapes, 3-day history, no API-server/kubelet jobs, cAdvisor allowlist |
-| Grafana | 96 Mi | 256 Mi | no database, no plugins, no sidecars: dashboards are files |
+| Grafana | 160 Mi | 384 Mi | no plugins, no sidecars: dashboards are files; a 1 Gi disk only so migrations run once |
 | kube-state-metrics | 32 Mi | 96 Mi | only the 8 object kinds the alerts read |
 | node-exporter | 24 Mi | 64 Mi | — |
 
