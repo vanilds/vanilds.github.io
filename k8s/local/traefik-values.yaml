@@ -2,7 +2,10 @@
 deployment:
   replicas: 1
 service:
-  type: ClusterIP           # kind has no cloud load balancer; traffic enters through the hostPort below
+  # kind has no cloud load balancer: a LoadBalancer Service would wait forever for an external IP (and so would
+  # `helm --wait`). Traffic enters through the hostPort below. Chart 42 reads the type from service.spec.
+  spec:
+    type: ClusterIP
 ports:
   web:
     hostPort: 80            # node port 80 → kind-config.yaml maps it to 127.0.0.1:8088
