@@ -1,0 +1,21 @@
+# The one object applied by hand (by the EC2 bootstrap, infra/aws/user-data.sh). Everything else in the cluster
+# comes from git through it: Argo CD reads k8s/argocd/apps and creates one Application per file there
+# ("app of apps"). To add, change or remove something in the cluster: a commit to main, never kubectl.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: root
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/vanilds/vanilds.github.io.git
+    targetRevision: main
+    path: k8s/argocd/apps
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true      # a file deleted from apps/ removes that Application (and, through it, what it installed)
+      selfHeal: true   # a change made by hand in the cluster is reverted to what git says

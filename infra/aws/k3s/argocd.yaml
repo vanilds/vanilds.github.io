@@ -1,0 +1,35 @@
+# Argo CD, installed by k3s's own Helm controller: the EC2 bootstrap (user-data.sh) copies this file into
+# /var/lib/rancher/k3s/server/manifests, and k3s installs (and later upgrades) the chart from it. This is the
+# only add-on not installed by Argo CD itself; every other one is in k8s/argocd/apps.
+#
+# Trimmed for one 4 GB node: no Dex (single admin user, no SSO), no notifications, no ApplicationSet controller
+# (the apps are plain files in k8s/argocd/apps). The UI is NOT exposed on the Internet: reach it through an SSM
+# port forward (docs/aws.md). Changing anything here: edit, then re-copy the file on the instance (or recreate
+# the instance) — k3s applies the new version.
+apiVersion: helm.cattle.io/v1
+kind: HelmChart
+metadata:
+  name: argo-cd
+  namespace: kube-system
+spec:
+  repo: https://argoproj.github.io/argo-helm
+  chart: argo-cd
+  version: 10.11.7          # Argo CD v3.5.7
+  targetNamespace: argocd
+  createNamespace: true
+  valuesContent: |-
+    fullnameOverride: argocd     # argocd-server, argocd-repo-server... instead of argo-cd-argocd-server
+    dex:
+      enabled: false
+    notifications:
+      enabled: false
+    applicationSet:
+      replicas: 0
+    controller:
+      resources: { requests: { cpu: 100m, memory: 256Mi }, limits: { memory: 512Mi } }
+    repoServer:
+      resources: { requests: { cpu: 25m, memory: 96Mi }, limits: { memory: 320Mi } }
+    server:
+      resources: { requests: { cpu: 25m, memory: 64Mi }, limits: { memory: 192Mi } }
+    redis:
+      resources: { requests: { cpu: 10m, memory: 32Mi }, limits: { memory: 96Mi } }

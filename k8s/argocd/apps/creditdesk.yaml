@@ -1,0 +1,23 @@
+# CreditDesk itself: k8s/overlays/aws (base + GHCR images at the release tag + TLS + SSM secrets).
+# A release is a commit to that overlay (.github/workflows/images.yml); Argo CD notices it within 3 minutes and
+# rolls the Deployments. Rolling back = reverting that commit.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: creditdesk
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/vanilds/vanilds.github.io.git
+    targetRevision: main
+    path: k8s/overlays/aws
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: creditdesk
+  syncPolicy:
+    automated: { prune: true, selfHeal: true }
+    # No CreateNamespace: the base has its own Namespace manifest (k8s/base/namespace.yaml)
+    retry: { limit: -1, backoff: { duration: 30s, factor: 2, maxDuration: 5m } }
+  # The ScaledObject makes KEDA create an HPA for the worker, and the HPAs change Deployment replicas: neither is
+  # in git, and the Deployments have no "replicas" field, so Argo CD has nothing to fight over.

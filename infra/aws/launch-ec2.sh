@@ -1,7 +1,8 @@
 #!/bin/bash
 # CreditDesk — launch the demo server (run in AWS CloudShell, us-east-1, after setup.sh).
 # Ubuntu 24.04 arm64 on t4g.medium, IMDSv2 with hop limit 2, no key pair (access via SSM),
-# bootstrapped by user-data.sh (swap, k3s, Ingress NGINX, cert-manager, DuckDNS updater).
+# bootstrapped by user-data.sh (swap, DuckDNS updater, k3s with Traefik, Argo CD → everything else from git).
+# To replace an existing instance, use recreate-ec2.sh (it terminates the old one, then runs this script).
 set -euo pipefail
 export AWS_DEFAULT_REGION="us-east-1"
 RAW="https://raw.githubusercontent.com/vanilds/vanilds.github.io/main/infra/aws"
@@ -38,5 +39,5 @@ echo "Launched $INSTANCE_ID (AMI $AMI). Waiting until it is running..."
 aws ec2 wait instance-running --instance-ids "$INSTANCE_ID"
 aws ec2 describe-instances --instance-ids "$INSTANCE_ID" \
   --query 'Reservations[0].Instances[0].{id:InstanceId,state:State.Name,ip:PublicIpAddress,type:InstanceType}' --output table
-echo "Repo variable EC2_INSTANCE_ID = $INSTANCE_ID"
-echo "Bootstrap takes ~5 minutes. Then connect with: aws ssm start-session --target $INSTANCE_ID"
+echo "Bootstrap takes ~5 minutes, then Argo CD installs the rest (~10 more). Follow it with:"
+echo "  aws ssm start-session --target $INSTANCE_ID   # then: sudo k3s kubectl -n argocd get applications"

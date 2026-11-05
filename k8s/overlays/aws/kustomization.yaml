@@ -1,0 +1,120 @@
+# k3s on the EC2 instance (t4g.medium, arm64, 4 GB). Applied by Argo CD (k8s/argocd/apps/creditdesk.yaml), never
+# by hand. What differs from the base:
+#   - images from GHCR, pinned to one release tag (written by .github/workflows/images.yml)
+#   - https://creditdesk.duckdns.org with a Let's Encrypt certificate and an http → https redirect
+#   - real Amazon S3, reached with the instance role: no S3 endpoint, no keys
+#   - secrets read from SSM Parameter Store by External Secrets (nothing secret in git or on disk)
+#   - smaller memory reservations, so everything fits on one 4 GB node next to k3s and the add-ons
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: creditdesk
+resources:
+  - ../../base
+  - secrets.yaml        # SecretStore (SSM) + ExternalSecret → Secret creditdesk-secrets
+  - https-redirect.yaml # Traefik middleware for the http → https redirect
+
+# Release: one tag for all five images (see .github/workflows/images.yml). "main" only until the first release.
+images:
+  - name: creditdesk-api
+    newName: ghcr.io/vanilds/creditdesk-api
+    newTag: main
+  - name: creditdesk-ai-worker
+    newName: ghcr.io/vanilds/creditdesk-ai-worker
+    newTag: main
+  - name: creditdesk-shell
+    newName: ghcr.io/vanilds/creditdesk-shell
+    newTag: main
+  - name: creditdesk-mfe-customers
+    newName: ghcr.io/vanilds/creditdesk-mfe-customers
+    newTag: main
+  - name: creditdesk-mfe-proposals
+    newName: ghcr.io/vanilds/creditdesk-mfe-proposals
+    newTag: main
+
+configMapGenerator:
+  - name: creditdesk-config
+    behavior: merge
+    literals:
+      - PUBLIC_URL=https://creditdesk.duckdns.org
+      # Real S3: only bucket and region. No S3_ENDPOINT (the SDK uses AWS's own) and no keys (the SDK takes the
+      # EC2 instance role from the metadata service; IMDSv2 hop limit 2 lets pods reach it).
+      - S3_BUCKET=creditdesk-documents-vanilds
+
+# The Secret is created by External Secrets (secrets.yaml), not by kustomize. The base's generator still runs,
+# so: a fixed name (no content hash: the hash of an empty generator says nothing) and the generated, empty
+# Secret is dropped below. Every reference in the base then points at "creditdesk-secrets", the one ESO owns.
+secretGenerator:
+  - name: creditdesk-secrets
+    behavior: merge
+    options:
+      disableNameSuffixHash: true
+
+patches:
+  - patch: |-
+      $patch: delete
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: creditdesk-secrets
+
+  # Public address, TLS and redirect. cert-manager sees the annotation, answers Let's Encrypt's HTTP-01
+  # challenge on port 80 and stores the certificate in creditdesk-tls; Traefik serves it on 443.
+  # The redirect is a middleware on this Ingress only, not on the whole port 80: the challenge requests
+  # (served by a temporary Ingress cert-manager creates) must still be answered over plain http.
+  - target: { kind: Ingress, name: creditdesk }
+    patch: |-
+      - op: add
+        path: /metadata/annotations
+        value:
+          cert-manager.io/cluster-issuer: letsencrypt
+          traefik.ingress.kubernetes.io/router.middlewares: creditdesk-https-redirect@kubernetescrd
+      - op: add
+        path: /spec/rules/0/host
+        value: creditdesk.duckdns.org
+      - op: add
+        path: /spec/tls
+        value:
+          - hosts: [creditdesk.duckdns.org]
+            secretName: creditdesk-tls
+
+  # Memory on a 4 GB node. Requests are what the scheduler reserves; real use at rest is lower than the base's
+  # numbers (sized for kind on an 8 GB codespace). Limits still protect the node; the 2 GB swap is the last
+  # safety net. JVM heaps follow the limit (MaxRAMPercentage), so a smaller limit is also a smaller heap.
+  - target: { kind: Deployment, name: api }
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources
+        value: { requests: { cpu: 200m, memory: 384Mi }, limits: { memory: 640Mi } }
+  - target: { kind: Deployment, name: keycloak }
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources
+        value: { requests: { cpu: 150m, memory: 384Mi }, limits: { memory: 768Mi } }
+  - target: { kind: Deployment, name: ai-worker }
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources
+        value: { requests: { cpu: 50m, memory: 160Mi }, limits: { memory: 384Mi } }
+  - target: { kind: StatefulSet, name: rabbitmq }
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources
+        value: { requests: { cpu: 50m, memory: 192Mi }, limits: { memory: 384Mi } }
+  - target: { kind: StatefulSet, name: postgres }
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources
+        value: { requests: { cpu: 50m, memory: 192Mi }, limits: { memory: 384Mi } }
+  # On a brand-new cluster Argo CD may sync this app before KEDA's CRDs exist (see secrets.yaml): create the rest
+  # and retry the ScaledObject instead of failing the whole sync on its dry run.
+  - target: { kind: ScaledObject, name: ai-worker }
+    patch: |-
+      - op: add
+        path: /metadata/annotations
+        value: { argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true }
+  # One node: two API pods would only split the same 2 vCPUs, and a third would not fit in memory
+  - target: { kind: HorizontalPodAutoscaler, name: api }
+    patch: |-
+      - op: replace
+        path: /spec/maxReplicas
+        value: 2

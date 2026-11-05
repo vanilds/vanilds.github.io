@@ -1,0 +1,123 @@
+name: Images
+
+# Builds the five CreditDesk images for amd64 (Codespaces, CI) and arm64 (the t4g EC2), pushes them to GHCR and
+# then records the new tag in k8s/overlays/aws/kustomization.yaml. That commit IS the deployment: Argo CD watches
+# the overlay and rolls the cluster to whatever the file says (GitOps — nobody runs kubectl against production).
+#
+# One tag for the whole system (sha-<commit>), even when only one service changed: a release is a set of images
+# that were tested together, and rolling back is reverting one commit. Unchanged images rebuild from cache in
+# seconds; their pods still restart because the tag changed — a few seconds here, worth one version number.
+#
+# Multi-arch without slow emulation: the Dockerfiles compile Java and Angular on the runner's own CPU
+# (--platform=$BUILDPLATFORM) and only the small final layers are assembled per architecture.
+
+on:
+  push:
+    branches: [main]
+    paths: ["api/**", "ai-worker/**", "web/**", ".github/workflows/images.yml"]
+  # A pull request that changes this workflow builds all five images without pushing: the pipeline is tested
+  # before it can publish anything. (Code changes are tested by api.yml, ai-worker.yml, web.yml and k8s.yml.)
+  pull_request:
+    paths: [".github/workflows/images.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Never two releases at once: the second waits, then commits on top of the first.
+concurrency:
+  group: images
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io/${{ github.repository_owner }}
+
+jobs:
+  build:
+    name: ${{ matrix.image }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      contents: read
+      packages: write          # push to ghcr.io with the job's own token (no personal access token)
+    strategy:
+      fail-fast: true          # a release is all five images or none
+      matrix:
+        include:
+          - { image: creditdesk-api, context: api, target: "" }
+          - { image: creditdesk-ai-worker, context: ai-worker, target: "" }
+          - { image: creditdesk-shell, context: web, target: shell }
+          - { image: creditdesk-mfe-customers, context: web, target: mfe-customers }
+          - { image: creditdesk-mfe-proposals, context: web, target: mfe-proposals }
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tag
+        id: tag
+        run: echo "tag=sha-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-qemu-action@v3       # only for the per-architecture final layers
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        if: github.event_name != 'pull_request'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          target: ${{ matrix.target }}
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: |
+            ${{ env.REGISTRY }}/${{ matrix.image }}:${{ steps.tag.outputs.tag }}
+            ${{ env.REGISTRY }}/${{ matrix.image }}:main
+          # Links the package to this repository on GHCR (its page, README and permissions)
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          # Each image keeps its own cache; the three web images also read the shell's, whose Angular build
+          # stage they share (one scope per image, so parallel jobs never overwrite each other's cache)
+          cache-from: |
+            type=gha,scope=${{ matrix.image }}
+            type=gha,scope=creditdesk-shell
+          cache-to: type=gha,scope=${{ matrix.image }},mode=max
+
+  deploy:
+    name: Record the release in the aws overlay
+    needs: build
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write          # the commit below; made with GITHUB_TOKEN, so it does not trigger other workflows
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Point every image at this commit's tag
+        run: |
+          tag="sha-${GITHUB_SHA::7}"
+          # In each "- name: creditdesk-..." block, replace the newTag line. sed instead of yq: yq would
+          # reformat the whole file, and the commit must be a one-line-per-image diff anyone can review.
+          sed -i -E "/- name: creditdesk-/,/newTag:/ s/^( +newTag: ).*/\1$tag/" k8s/overlays/aws/kustomization.yaml
+          git diff
+          [ "$(grep -c "newTag: $tag" k8s/overlays/aws/kustomization.yaml)" = 5 ]
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add k8s/overlays/aws/kustomization.yaml
+          if git diff --cached --quiet; then echo "Already at this tag"; exit 0; fi
+          git commit -m "deploy: images sha-${GITHUB_SHA::7}"
+          # main may have moved while the images were building: replay this one-line change on top and retry
+          for _ in 1 2 3; do
+            git pull --rebase origin main && git push origin HEAD:main && exit 0
+            sleep 5
+          done
+          exit 1
