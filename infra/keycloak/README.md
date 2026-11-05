@@ -10,8 +10,9 @@ generated from this same file by `kustomization.yaml` next to it (one source of 
 | `marcos` | `marcos-demo` | MANAGER | analyst + start analysis, approve, reject, return proposals **of others** |
 | `aline` | `aline-demo` | AUDITOR | read-only, audit trail, reveal a CPF with a reason |
 
-**Local, synthetic data only.** These passwords are public on purpose; the public demo (Phase 6) gets its own
-realm settings, login rate limiting and no password grant.
+**Synthetic data only.** These passwords are public on purpose, so anyone can try the demo. On the public demo
+(`k8s/overlays/aws`): Keycloak's brute-force detection locks an account for a while after 5 failed logins, the
+`creditdesk-cli` password grant is switched off, and the admin console (`/auth/admin`) answers 403.
 
 ## Clients
 
@@ -21,7 +22,8 @@ realm settings, login rate limiting and no password grant.
   Keycloak replaces placeholders from environment variables when it imports a realm, so the Codespaces URL
   (different for every codespace) or `https://creditdesk.duckdns.org` comes from the pod, not from this file.
 - `creditdesk-cli` — password grant ("direct access"), only so you can call the API from `api/requests.http`
-  or curl while developing. OAuth 2.1 removes this grant; it never leaves local development.
+  or curl while developing. OAuth 2.1 removes this grant; it never leaves local development: its
+  `directAccessGrantsEnabled` is `${CREDITDESK_PASSWORD_GRANT:true}`, and the aws overlay sets that to `false`.
 
 Both add `creditdesk-api` to the token's `aud` (audience mapper). The API refuses tokens without it.
 

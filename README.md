@@ -400,6 +400,7 @@ Merging to `main` is the deployment: `.github/workflows/images.yml` builds the f
 | **Real S3 with the instance role** | The API gets no endpoint and no keys: the AWS SDK takes temporary credentials from the metadata service (IMDSv2, hop limit 2). Presigned URLs point straight at S3; the bucket's CORS allows only the two front-end origins. |
 | **TLS: cert-manager + Let's Encrypt (HTTP-01)** | Free, renewed automatically. The http → https redirect is a Traefik middleware on the app's Ingress only, so the ACME challenge on port 80 keeps working. |
 | **Fits on one 4 GB node** | Argo CD without Dex, notifications and ApplicationSet; External Secrets and KEDA without their validating webhooks (manifests are validated in CI instead); smaller memory requests for the apps; 2 GB swap as the safety net. |
+| **Keycloak locked down on the Internet** | The admin console answers 403 (`/auth/admin`): the realm is imported from git at every start, so changes go through a pull request. The dev-only password-grant client is switched off; brute-force detection locks an account after 5 failed logins. The demo passwords stay public on purpose. |
 | **Server found by tag, not by id** | The start/stop workflow and the IAM policy use the `Project=creditdesk` tag, so recreating the instance changes nothing else. |
 
 ---
@@ -459,7 +460,7 @@ vanilds.github.io/
 - [x] **Phase 3 — Portfolio & micro frontends**: shell with portfolio + resume on GitHub Pages, `mfe-customers` + `mfe-proposals` with Native Federation, offline fallback, clients generated from OpenAPI.
 - [x] **Phase 4 — Events, AI & S3**: transactional outbox → RabbitMQ with publisher confirms, retry and dead-letter queues, idempotent consumers on both sides, LangGraph worker (rules decide, the model only writes, guardrails check), presigned S3 uploads and audited downloads.
 - [x] **Phase 5 — Kubernetes locally**: kind in Codespaces and CI, one Traefik Ingress for every app (presigned S3 URLs included), startup/readiness/liveness probes, requests/limits, non-root read-only pods, HPA for the API, KEDA scaling the worker from zero on queue length, end-to-end smoke test in CI.
-- [ ] **Phase 6 — AWS**: multi-arch images on GHCR, GitOps with Argo CD (app of apps), k3s on EC2 with Traefik + Let's Encrypt, secrets from SSM through External Secrets, real S3 with the instance role, recreate-from-git bootstrap, start/stop by tag.
+- [x] **Phase 6 — AWS**: multi-arch images on GHCR, GitOps with Argo CD (app of apps), k3s on EC2 with Traefik + Let's Encrypt, secrets from SSM through External Secrets, real S3 with the instance role, recreate-from-git bootstrap, start/stop by tag.
 - [ ] **Phase 7 — Operations**: Prometheus/Grafana dashboards, tracing by correlation-id, daily backups to S3 and a tested restore, incident drills written up in `docs/`.
 
 ---
