@@ -4,8 +4,7 @@ import java.util.EnumSet;
 import java.util.Set;
 
 /**
- * DRAFT → SUBMITTED → IN_ANALYSIS → APPROVED | REJECTED, with IN_ANALYSIS → DRAFT (returned) and
- * DRAFT → CANCELLED. Phase 1 only creates and edits drafts; the transitions arrive in Phase 2 with roles.
+ * Where a proposal is in the workflow. The allowed moves between statuses are in {@link ProposalAction}.
  */
 public enum ProposalStatus {
     DRAFT, SUBMITTED, IN_ANALYSIS, APPROVED, REJECTED, CANCELLED;

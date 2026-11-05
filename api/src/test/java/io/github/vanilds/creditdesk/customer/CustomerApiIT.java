@@ -37,15 +37,22 @@ class CustomerApiIT extends IntegrationTest {
                 .andExpect(jsonPath("$.monthlyRevenue").value(8500.00))
                 .andExpect(jsonPath("$.version").value(0));
 
-        // stored normalized (digits only), never the masked form
+        // the database never holds the CPF in clear: only a hash, the ciphertext and the masked form
         String id = read(result).get("id").asText();
-        assertThat(jdbc.queryForObject("select document from customer where id = ?::uuid", String.class, id))
-                .isEqualTo(cpf);
+        var row = jdbc.queryForMap(
+                "select document_hash, document_encrypted, document_display from customer where id = ?::uuid", id);
+        assertThat((String) row.get("document_hash")).hasSize(64).doesNotContain(cpf);
+        assertThat(new String((byte[]) row.get("document_encrypted"), java.nio.charset.StandardCharsets.ISO_8859_1))
+                .doesNotContain(cpf);
+        assertThat(row.get("document_display")).isEqualTo(BrazilianDocuments.maskCpf(cpf));
+        assertThat(jdbc.queryForObject("select count(*) from information_schema.columns "
+                + "where table_name = 'customer' and column_name = 'document'", Integer.class)).isZero();
     }
 
     @Test
     void acceptsAlphanumericCnpjAndShowsItFormatted() throws Exception {
-        jdbc.update("update customer set deleted_at = now() where document = '12ABC34501DE35'"); // re-runnable
+        // re-runnable: free the document if an earlier test run registered it
+        jdbc.update("update customer set deleted_at = now() where document_display = '12.ABC.345/01DE-35' and deleted_at is null");
         postJson("/api/customers", Map.of("type", "PJ", "document", "12.abc.345/01de-35",
                 "name", "Studio Pixel Tecnologia Ltda", "email", "adm@example.com", "monthlyRevenue", "320000"))
                 .andExpect(status().isCreated())
@@ -136,13 +143,15 @@ class CustomerApiIT extends IntegrationTest {
     void updatesEditableFieldsAndIncrementsVersion() throws Exception {
         UUID id = createCustomer("Carlos Antigo");
 
-        mvc.perform(put("/api/customers/{id}", id).contentType(MediaType.APPLICATION_JSON).content("""
+        mvc.perform(put("/api/customers/{id}", id).header("If-Match", version(0))
+                        .contentType(MediaType.APPLICATION_JSON).content("""
                         {"name": "Carlos Novo", "email": "novo@example.com", "monthlyRevenue": 9200.50}
                         """))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.name").value("Carlos Novo"))
                 .andExpect(jsonPath("$.monthlyRevenue").value(9200.50))
-                .andExpect(jsonPath("$.version").value(1));
+                .andExpect(jsonPath("$.version").value(1))
+                .andExpect(header().string("ETag", "\"1\""));
     }
 
     @Test
@@ -152,7 +161,7 @@ class CustomerApiIT extends IntegrationTest {
                 "monthlyRevenue", "100");
         String id = read(postJson("/api/customers", body)).get("id").asText();
 
-        mvc.perform(delete("/api/customers/{id}", id)).andExpect(status().isNoContent());
+        mvc.perform(delete("/api/customers/{id}", id).header("If-Match", version(0))).andExpect(status().isNoContent());
         mvc.perform(get("/api/customers/{id}", id)).andExpect(status().isNotFound());
 
         // the row is still there for history
@@ -168,7 +177,7 @@ class CustomerApiIT extends IntegrationTest {
         postJson("/api/proposals", Map.of("customerId", id, "kind", "NEW_CREDIT", "amount", "5000.00",
                 "installments", 12, "monthlyRate", "0.0199")).andExpect(status().isCreated());
 
-        mvc.perform(delete("/api/customers/{id}", id))
+        mvc.perform(delete("/api/customers/{id}", id).header("If-Match", version(0)))
                 .andExpect(status().isUnprocessableEntity())
                 .andExpect(jsonPath("$.type")
                         .value("https://vanilds.github.io/problems/customer-has-open-proposals"));

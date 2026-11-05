@@ -1,18 +1,108 @@
 openapi: 3.1.0
 info:
-  description: Credit and debt-renegotiation proposals for bank analysts. All data
-    is synthetic.
+  description: |-
+    Credit and debt-renegotiation proposals for bank analysts. All data is synthetic.
+
+    **Auth:** Keycloak access token (`Authorization: Bearer …`). Roles: `ANALYST`, `MANAGER` (includes analyst), `AUDITOR` (read-only).
+
+    **Optimistic locking:** reads return `ETag: "<version>"`; every change needs `If-Match: "<version>"` — missing → 428, stale → 412.
+
+    **Tracing:** send `X-Correlation-Id` or get one back in the response.
   title: CreditDesk API
-  version: 0.1.0
+  version: 0.2.0
 servers:
 - description: Same origin
   url: /
+security:
+- keycloak: []
 tags:
+- description: New credit and renegotiation proposals and their approval workflow
+  name: Proposals
 - description: Individuals (PF) and companies (PJ)
   name: Customers
-- description: New credit and renegotiation proposals
-  name: Proposals
+- description: Append-only audit trail (MANAGER and AUDITOR)
+  name: Audit
 paths:
+  /api/audit:
+    get:
+      description: Newest first. The period is at most 90 days and defaults to the
+        last 30 days.
+      operationId: searchAudit
+      parameters:
+      - description: CUSTOMER or PROPOSAL
+        in: query
+        name: entityType
+        required: false
+        schema:
+          type: string
+      - in: query
+        name: entityId
+        required: false
+        schema:
+          type: string
+          format: uuid
+      - description: Keycloak user id
+        in: query
+        name: actorId
+        required: false
+        schema:
+          type: string
+      - in: query
+        name: action
+        required: false
+        schema:
+          type: string
+          enum:
+          - CUSTOMER_CREATED
+          - CUSTOMER_UPDATED
+          - CUSTOMER_DELETED
+          - CUSTOMER_DOCUMENT_REVEALED
+          - PROPOSAL_CREATED
+          - PROPOSAL_UPDATED
+          - PROPOSAL_SUBMITTED
+          - PROPOSAL_CANCELLED
+          - PROPOSAL_ANALYSIS_STARTED
+          - PROPOSAL_APPROVED
+          - PROPOSAL_REJECTED
+          - PROPOSAL_RETURNED
+          - SYSTEM_MIGRATION
+      - in: query
+        name: from
+        required: false
+        schema:
+          type: string
+          format: date
+      - in: query
+        name: to
+        required: false
+        schema:
+          type: string
+          format: date
+      - in: query
+        name: page
+        required: false
+        schema:
+          type: integer
+          format: int32
+          default: 0
+      - description: "20, 50 or 100"
+        in: query
+        name: size
+        required: false
+        schema:
+          type: integer
+          format: int32
+          default: 20
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PageResponseAuditEntryResponse"
+          description: OK
+      summary: Search the audit trail
+      tags:
+      - Audit
   /api/customers:
     get:
       description: "Paginated, ordered by name. CPFs are returned masked."
@@ -56,7 +146,8 @@ paths:
       tags:
       - Customers
     post:
-      description: Validates CPF/CNPJ check digits and rejects duplicates.
+      description: Validates CPF/CNPJ check digits and rejects duplicates. The document
+        is stored encrypted.
       operationId: createCustomer
       requestBody:
         content:
@@ -85,6 +176,13 @@ paths:
         schema:
           type: string
           format: uuid
+      - description: "ETag from the last read, e.g. \"3\". Required: missing → 428,\
+          \ stale → 412."
+        in: header
+        name: If-Match
+        required: false
+        schema:
+          type: string
       responses:
         "204":
           description: No Content
@@ -92,6 +190,7 @@ paths:
       tags:
       - Customers
     get:
+      description: Returns the version as ETag.
       operationId: getCustomer
       parameters:
       - in: path
@@ -119,6 +218,13 @@ paths:
         schema:
           type: string
           format: uuid
+      - description: "ETag from the last read, e.g. \"3\". Required: missing → 428,\
+          \ stale → 412."
+        in: header
+        name: If-Match
+        required: false
+        schema:
+          type: string
       requestBody:
         content:
           application/json:
@@ -133,6 +239,34 @@ paths:
                 $ref: "#/components/schemas/CustomerResponse"
           description: OK
       summary: "Update name, e-mail and monthly revenue"
+      tags:
+      - Customers
+  /api/customers/{id}/document/reveal:
+    post:
+      description: AUDITOR only. The reason is mandatory and recorded in the audit
+        trail.
+      operationId: revealCustomerDocument
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RevealDocumentRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RevealedDocumentResponse"
+          description: OK
+      summary: Reveal the full CPF/CNPJ
       tags:
       - Customers
   /api/proposals:
@@ -173,6 +307,20 @@ paths:
         schema:
           type: string
           format: uuid
+      - description: Only proposals owned by this analyst (Keycloak id). Use mine=true
+          for your own.
+        in: query
+        name: analystId
+        required: false
+        schema:
+          type: string
+      - description: true = only my proposals
+        in: query
+        name: mine
+        required: false
+        schema:
+          type: boolean
+          default: false
       - in: query
         name: page
         required: false
@@ -199,7 +347,7 @@ paths:
       tags:
       - Proposals
     post:
-      description: Always created as DRAFT.
+      description: "Always created as DRAFT, owned by the caller."
       operationId: createProposal
       requestBody:
         content:
@@ -219,6 +367,7 @@ paths:
       - Proposals
   /api/proposals/{id}:
     get:
+      description: Returns the version as ETag.
       operationId: getProposal
       parameters:
       - in: path
@@ -238,7 +387,7 @@ paths:
       tags:
       - Proposals
     put:
-      description: Only while it is DRAFT.
+      description: "Owner only, while DRAFT."
       operationId: updateProposal
       parameters:
       - in: path
@@ -247,6 +396,13 @@ paths:
         schema:
           type: string
           format: uuid
+      - description: "ETag from the last read, e.g. \"3\". Required: missing → 428,\
+          \ stale → 412."
+        in: header
+        name: If-Match
+        required: false
+        schema:
+          type: string
       requestBody:
         content:
           application/json:
@@ -263,8 +419,271 @@ paths:
       summary: Edit a proposal
       tags:
       - Proposals
+  /api/proposals/{id}/approve:
+    post:
+      description: "Manager, not the author (four-eyes). IN_ANALYSIS → APPROVED."
+      operationId: approveProposal
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - description: "ETag from the last read, e.g. \"3\". Required: missing → 428,\
+          \ stale → 412."
+        in: header
+        name: If-Match
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TransitionRequest"
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProposalResponse"
+          description: OK
+      summary: Approve
+      tags:
+      - Proposals
+  /api/proposals/{id}/cancel:
+    post:
+      description: Owner only. DRAFT → CANCELLED.
+      operationId: cancelProposal
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - description: "ETag from the last read, e.g. \"3\". Required: missing → 428,\
+          \ stale → 412."
+        in: header
+        name: If-Match
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TransitionRequest"
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProposalResponse"
+          description: OK
+      summary: Cancel a draft
+      tags:
+      - Proposals
+  /api/proposals/{id}/history:
+    get:
+      description: "Every status change, oldest first, with who did it and the reason."
+      operationId: getProposalHistory
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/StatusChangeResponse"
+          description: OK
+      summary: Status timeline
+      tags:
+      - Proposals
+  /api/proposals/{id}/reject:
+    post:
+      description: "Manager, not the author. Reason required. IN_ANALYSIS → REJECTED."
+      operationId: rejectProposal
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - description: "ETag from the last read, e.g. \"3\". Required: missing → 428,\
+          \ stale → 412."
+        in: header
+        name: If-Match
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TransitionRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProposalResponse"
+          description: OK
+      summary: Reject
+      tags:
+      - Proposals
+  /api/proposals/{id}/return:
+    post:
+      description: "Manager, not the author. Reason required. IN_ANALYSIS → DRAFT\
+        \ (editable again)."
+      operationId: returnProposal
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - description: "ETag from the last read, e.g. \"3\". Required: missing → 428,\
+          \ stale → 412."
+        in: header
+        name: If-Match
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TransitionRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProposalResponse"
+          description: OK
+      summary: Return to the analyst for changes
+      tags:
+      - Proposals
+  /api/proposals/{id}/start-analysis:
+    post:
+      description: "Manager, not the author. SUBMITTED → IN_ANALYSIS. From Phase 4\
+        \ the AI worker does this automatically; this stays as the manual path when\
+        \ the worker is down."
+      operationId: startProposalAnalysis
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - description: "ETag from the last read, e.g. \"3\". Required: missing → 428,\
+          \ stale → 412."
+        in: header
+        name: If-Match
+        required: false
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProposalResponse"
+          description: OK
+      summary: Pick up a submitted proposal
+      tags:
+      - Proposals
+  /api/proposals/{id}/submit:
+    post:
+      description: Owner only. DRAFT → SUBMITTED.
+      operationId: submitProposal
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - description: "ETag from the last read, e.g. \"3\". Required: missing → 428,\
+          \ stale → 412."
+        in: header
+        name: If-Match
+        required: false
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProposalResponse"
+          description: OK
+      summary: Submit for analysis
+      tags:
+      - Proposals
 components:
   schemas:
+    AuditEntryResponse:
+      type: object
+      properties:
+        action:
+          type: string
+          enum:
+          - CUSTOMER_CREATED
+          - CUSTOMER_UPDATED
+          - CUSTOMER_DELETED
+          - CUSTOMER_DOCUMENT_REVEALED
+          - PROPOSAL_CREATED
+          - PROPOSAL_UPDATED
+          - PROPOSAL_SUBMITTED
+          - PROPOSAL_CANCELLED
+          - PROPOSAL_ANALYSIS_STARTED
+          - PROPOSAL_APPROVED
+          - PROPOSAL_REJECTED
+          - PROPOSAL_RETURNED
+          - SYSTEM_MIGRATION
+        actorId:
+          type: string
+          description: Keycloak user id (token subject)
+        actorName:
+          type: string
+          description: Username at the time of the action
+          example: marcos
+        changes:
+          type: object
+          additionalProperties: {}
+          description: "Changed fields as {\"field\": {\"from\": …, \"to\": …}}; personal\
+            \ data masked"
+        correlationId:
+          type: string
+        entityId:
+          type: string
+          format: uuid
+        entityType:
+          type: string
+          example: PROPOSAL
+        id:
+          type: string
+          format: uuid
+        occurredAt:
+          type: string
+          format: date-time
+        reason:
+          type: string
     CreateCustomerRequest:
       type: object
       properties:
@@ -360,6 +779,25 @@ components:
         version:
           type: integer
           format: int64
+    PageResponseAuditEntryResponse:
+      type: object
+      properties:
+        content:
+          type: array
+          items:
+            $ref: "#/components/schemas/AuditEntryResponse"
+        page:
+          type: integer
+          format: int32
+        size:
+          type: integer
+          format: int32
+        totalElements:
+          type: integer
+          format: int64
+        totalPages:
+          type: integer
+          format: int32
     PageResponseCustomerResponse:
       type: object
       properties:
@@ -405,6 +843,10 @@ components:
           type: number
         analystId:
           type: string
+          description: Keycloak id of the analyst who owns the proposal
+        analystName:
+          type: string
+          example: ana
         createdAt:
           type: string
           format: date-time
@@ -449,6 +891,73 @@ components:
         version:
           type: integer
           format: int64
+    RevealDocumentRequest:
+      type: object
+      properties:
+        reason:
+          type: string
+          description: Why the full document is needed
+          example: "Ticket SAC-4821: confirm customer identity"
+          maxLength: 500
+          minLength: 10
+      required:
+      - reason
+    RevealedDocumentResponse:
+      type: object
+      properties:
+        customerId:
+          type: string
+          format: uuid
+        document:
+          type: string
+          description: "Full CPF/CNPJ, formatted"
+          example: 529.982.247-25
+        type:
+          type: string
+          enum:
+          - PF
+          - PJ
+    StatusChangeResponse:
+      type: object
+      properties:
+        actorName:
+          type: string
+        changedAt:
+          type: string
+          format: date-time
+        from:
+          type: string
+          description: Null for the creation of the proposal
+          enum:
+          - DRAFT
+          - SUBMITTED
+          - IN_ANALYSIS
+          - APPROVED
+          - REJECTED
+          - CANCELLED
+        id:
+          type: string
+          format: uuid
+        reason:
+          type: string
+        to:
+          type: string
+          enum:
+          - DRAFT
+          - SUBMITTED
+          - IN_ANALYSIS
+          - APPROVED
+          - REJECTED
+          - CANCELLED
+    TransitionRequest:
+      type: object
+      properties:
+        reason:
+          type: string
+          description: Mandatory for reject and return; shown to the analyst
+          example: Missing proof of income
+          maxLength: 500
+          minLength: 0
     UpdateCustomerRequest:
       type: object
       properties:
@@ -495,3 +1004,10 @@ components:
           example: 0.0189
       required:
       - kind
+  securitySchemes:
+    keycloak:
+      bearerFormat: JWT
+      description: Access token from Keycloak (realm creditdesk). See api/requests.http
+        for how to get one.
+      scheme: bearer
+      type: http

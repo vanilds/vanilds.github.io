@@ -1,0 +1,5 @@
+# Integration tests: throwaway keys (tests never call Keycloak; tokens are built by spring-security-test)
+creditdesk:
+  crypto:
+    encryption-key: KFDNBz/I41QIpBXrES30Gn19IoZ+F9yGz6jXSroLjkk=
+    hash-key: K6VNxAbXqtpAwTpivojjffOzxF8SMIk4EtJh2uQq03M=

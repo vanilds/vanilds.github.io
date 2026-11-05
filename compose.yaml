@@ -1,5 +1,6 @@
 # Local stack for development: `docker compose up --build`
-# API on http://localhost:8080 (Swagger UI: /swagger-ui.html), PostgreSQL on localhost:5432.
+# API on http://localhost:8080 (Swagger UI: /swagger-ui.html), Keycloak on http://localhost:8180, PostgreSQL on 5432.
+# Demo users and how to get a token: infra/keycloak/README.md. Requests ready to send: api/requests.http.
 # Grows phase by phase (Keycloak, RabbitMQ, MinIO, worker); Kubernetes manifests live in k8s/.
 name: creditdesk
 
@@ -20,19 +21,41 @@ services:
       timeout: 3s
       retries: 10
 
+  # Identity provider (stands in for Entra ID / corporate SSO). Dev mode: in-memory DB, realm re-imported on
+  # every start from infra/keycloak/creditdesk-realm.json — so the realm is versioned in git like any code.
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0
+    command:
+      - start-dev
+      - --import-realm
+      # Fixed public URL: tokens always say iss=http://localhost:8180/realms/creditdesk, even when the API talks
+      # to Keycloak through the internal name "keycloak:8080"
+      - --hostname=http://localhost:8180
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin   # local only: admin console at http://localhost:8180/admin
+    volumes:
+      - ./infra/keycloak:/opt/keycloak/data/import:ro
+    ports:
+      - "8180:8080"
+
   api:
     build: ./api
     environment:
-      SPRING_PROFILES_ACTIVE: dev     # loads the synthetic demo data
+      SPRING_PROFILES_ACTIVE: dev     # synthetic demo data + throwaway encryption keys (application.yml)
       DB_HOST: postgres
       DB_NAME: creditdesk
       DB_USER: creditdesk
       DB_PASSWORD: creditdesk
+      OIDC_ISSUER_URI: http://localhost:8180/realms/creditdesk
+      OIDC_JWK_SET_URI: http://keycloak:8080/realms/creditdesk/protocol/openid-connect/certs
     ports:
       - "8080:8080"
     depends_on:
       postgres:
         condition: service_healthy    # wait until Postgres accepts connections, not just until it starts
+      keycloak:
+        condition: service_started    # keys are fetched on the first request, so no need to wait for "healthy"
 
 volumes:
   pgdata:

@@ -43,6 +43,11 @@ public interface ProposalRepository extends JpaRepository<Proposal, UUID>, JpaSp
             return status == null ? null : (root, query, cb) -> cb.equal(root.get("status"), status);
         }
 
+        static Specification<Proposal> analystEquals(String analystId) {
+            return analystId == null || analystId.isBlank() ? null
+                    : (root, query, cb) -> cb.equal(root.get("analystId"), analystId);
+        }
+
         static Specification<Proposal> customerEquals(UUID customerId) {
             return customerId == null ? null : (root, query, cb) -> cb.equal(root.get("customer").get("id"), customerId);
         }

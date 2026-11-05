@@ -26,6 +26,17 @@ spring:
 
 creditdesk:
   zone-id: America/Sao_Paulo       # business dates (filters, "today") are in São Paulo time
+  security:
+    # Public URL written in the token ("iss"). Must match exactly, or every token is refused.
+    issuer: ${OIDC_ISSUER_URI:http://localhost:8180/realms/creditdesk}
+    # Where the API fetches Keycloak's public keys — the internal address (see SecurityConfig)
+    jwk-set-uri: ${OIDC_JWK_SET_URI:http://localhost:8180/realms/creditdesk/protocol/openid-connect/certs}
+    audience: creditdesk-api
+  crypto:
+    # No defaults on purpose: the API refuses to start without keys (32 random bytes each, base64).
+    # Kubernetes: Secret creditdesk-secrets. AWS (Phase 6): SSM Parameter Store.
+    encryption-key: ${DOCUMENT_ENCRYPTION_KEY:}
+    hash-key: ${DOCUMENT_HASH_KEY:}
 
 management:
   endpoints:
@@ -56,11 +67,22 @@ springdoc:
 server:
   shutdown: graceful               # finish in-flight requests when the pod is terminated
 
+logging:
+  pattern:
+    correlation: "[%X{correlationId:-}] "   # every log line carries the request's X-Correlation-Id
+
 ---
-# Local development (docker compose / Codespaces): adds synthetic demo data
+# Local development (docker compose / Codespaces): synthetic demo data + throwaway keys
 spring:
   config:
     activate:
       on-profile: dev
   flyway:
-    locations: classpath:db/migration, classpath:db/seed
+    # The Phase 1 SQL seed was replaced by a Java one (R__Demo_data); old databases still list it as applied
+    ignore-migration-patterns: "*:missing"
+
+creditdesk:
+  crypto:
+    # DEV ONLY — public in this repo, protects nothing but synthetic data. Real environments use their own.
+    encryption-key: ${DOCUMENT_ENCRYPTION_KEY:X2PCxAZlMkQLxOP/IeMU4pKdgx2zojqUwLbrolwJih0=}
+    hash-key: ${DOCUMENT_HASH_KEY:dJYopkozIxMD7904Qx76FUIQm6p4XobO/mzB8914zE0=}

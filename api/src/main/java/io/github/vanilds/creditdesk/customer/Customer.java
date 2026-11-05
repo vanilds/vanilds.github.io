@@ -22,9 +22,22 @@ public class Customer {
     @Column(nullable = false, updatable = false)
     private CustomerType type;
 
-    /** Normalized CPF/CNPJ. Immutable: a different document is a different customer. */
-    @Column(nullable = false, updatable = false)
-    private String document;
+    /*
+     * The CPF/CNPJ is never stored in clear (see CustomerDocuments). Immutable: a different document is a
+     * different customer.
+     */
+
+    /** HMAC of the normalized document: equality search and the unique index use this. */
+    @Column(name = "document_hash", nullable = false, updatable = false)
+    private String documentHash;
+
+    /** AES-GCM ciphertext; decrypted only when an auditor reveals it. */
+    @Column(name = "document_encrypted", nullable = false, updatable = false)
+    private byte[] documentEncrypted;
+
+    /** Masked CPF / formatted CNPJ, computed once at creation so listing a page never decrypts anything. */
+    @Column(name = "document_display", nullable = false, updatable = false)
+    private String documentDisplay;
 
     @Column(nullable = false)
     private String name;
@@ -51,11 +64,13 @@ public class Customer {
         // for JPA
     }
 
-    public Customer(CustomerType type, String document, String name, String email, BigDecimal monthlyRevenue,
-                    Instant now) {
+    public Customer(CustomerType type, CustomerDocuments.Protected document, String name, String email,
+                    BigDecimal monthlyRevenue, Instant now) {
         this.id = UUID.randomUUID();
         this.type = Objects.requireNonNull(type);
-        this.document = Objects.requireNonNull(document);
+        this.documentHash = document.hash();
+        this.documentEncrypted = document.encrypted();
+        this.documentDisplay = document.display();
         this.name = name;
         this.email = email;
         this.monthlyRevenue = monthlyRevenue;
@@ -81,7 +96,11 @@ public class Customer {
     }
 
     public String displayDocument() {
-        return type.displayDocument(document);
+        return documentDisplay;
+    }
+
+    byte[] getDocumentEncrypted() {
+        return documentEncrypted;
     }
 
     public UUID getId() {
@@ -90,10 +109,6 @@ public class Customer {
 
     public CustomerType getType() {
         return type;
-    }
-
-    public String getDocument() {
-        return document;
     }
 
     public String getName() {

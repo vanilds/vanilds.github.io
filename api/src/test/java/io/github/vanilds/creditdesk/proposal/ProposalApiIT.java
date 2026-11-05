@@ -35,6 +35,8 @@ class ProposalApiIT extends IntegrationTest {
                 .andExpect(jsonPath("$.kind").value("RENEGOTIATION"))
                 .andExpect(jsonPath("$.customerId").value(customerId.toString()))
                 .andExpect(jsonPath("$.customerName").value("Fernanda Oliveira"))
+                .andExpect(jsonPath("$.analystId").value(ANA.id()))
+                .andExpect(jsonPath("$.analystName").value("ana"))
                 .andExpect(jsonPath("$.installmentAmount").value(792.17))
                 .andExpect(jsonPath("$.totalAmount").value(19012.08));
     }
@@ -63,14 +65,16 @@ class ProposalApiIT extends IntegrationTest {
                 {"kind": "NEW_CREDIT", "amount": 18000.00, "installments": 36, "monthlyRate": 0.0189}
                 """;
 
-        mvc.perform(put("/api/proposals/{id}", id).contentType(MediaType.APPLICATION_JSON).content(edit))
+        mvc.perform(put("/api/proposals/{id}", id).header("If-Match", version(0))
+                        .contentType(MediaType.APPLICATION_JSON).content(edit))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.installmentAmount").value(693.78))
                 .andExpect(jsonPath("$.version").value(1));
 
-        jdbc.update("update proposal set status = 'SUBMITTED' where id = ?", id);
+        jdbc.update("update proposal set status = 'SUBMITTED' where id = ?", id); // version stays 1
 
-        mvc.perform(put("/api/proposals/{id}", id).contentType(MediaType.APPLICATION_JSON).content(edit))
+        mvc.perform(put("/api/proposals/{id}", id).header("If-Match", version(1))
+                        .contentType(MediaType.APPLICATION_JSON).content(edit))
                 .andExpect(status().isUnprocessableEntity())
                 .andExpect(jsonPath("$.type").value("https://vanilds.github.io/problems/proposal-not-editable"));
     }
