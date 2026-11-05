@@ -1,0 +1,49 @@
+# Project context — vanilds.github.io
+
+Read this first in any new session. It records decisions and the current state so work can continue without the original conversation.
+
+## What this repo is
+
+- **Portfolio** of Vani Santos (Senior Front-end Engineer, Angular / micro frontends, Brazilian banking) — will be served by GitHub Pages at https://vanilds.github.io.
+- **CreditDesk** — a demo back-office app inside the portfolio: credit and debt-renegotiation proposals for bank analysts. Opened from the portfolio's "Try the demo" button.
+- **Goal**: gain real backend + Ops experience (feedback from a rejected AI-lab application: missing backend design, Docker, Kubernetes). Depth over number of technologies — every tech must solve a real problem in the system and be explainable in an interview.
+
+## Decisions (do not revisit without reason)
+
+- Front: Angular, **Native Federation** — `shell` (portfolio + resume + demo host, on GitHub Pages) and remotes `mfe-customers`, `mfe-proposals` (on the cluster). Shell shows "Demo offline" fallback when the cluster is stopped.
+- API: Java 21, Spring Boot 3, Spring Security (JWT resource server), JPA, Flyway, RFC 9457 errors, OpenAPI contract in `api/openapi.yaml`, Testcontainers.
+- Auth: Keycloak (roles `ANALYST`, `MANAGER`, `AUDITOR`).
+- Async: RabbitMQ + transactional outbox; Python 3.12 **LangGraph** worker drafts the AI credit opinion from masked data.
+- Data: PostgreSQL 16, Redis 7 (rate limit for public demo login). Documents in **Amazon S3** via presigned URLs (MinIO only in the local overlay).
+- Infra: **k3s on one EC2 t4g.medium (arm64)** in us-east-1, Ingress NGINX + cert-manager, Argo CD later. No Elastic IP — DuckDNS (`creditdesk.duckdns.org`) updated at every boot. No SSH (SSM Session Manager only). No static AWS keys anywhere.
+- Cost: paid by a US$100 promotional credit (expires 2027-06-30). EC2 runs only weekdays 08:00–20:00 São Paulo via `.github/workflows/ec2-schedule.yml`.
+- Dev environment: the user's Mac is old — everything runs in **GitHub Codespaces** (needs a `.devcontainer`) or on AWS. Keep images multi-arch (arm64 + amd64).
+- Repo docs and code in English; conversation with the user in Portuguese.
+- Diagrams follow the user's LinkedIn carousel look (navy grid, orange mono kicker, heavy white title). Sources in `docs/diagrams/src/` (`specs.py` + `render.mjs`, Mermaid + Puppeteer).
+
+## Current state (2026-11-04)
+
+Done:
+- Repo created; README with architecture, domain model, flows and branded diagrams.
+- Kustomize manifests in `k8s/base` + `k8s/overlays/local` (no app images yet).
+- AWS created with `infra/aws/setup.sh` (CloudShell, idempotent): budget `creditdesk-monthly` (alerts 10/50/80%, credits excluded), S3 `creditdesk-documents-vanilds` (private, versioned, CORS) and `creditdesk-backups-vanilds` (expire 30 days), IAM role + instance profile `creditdesk-ec2-role`, security group `creditdesk-web` (80/443), GitHub OIDC provider + role `creditdesk-github-actions`.
+- SSM SecureString `/creditdesk/duckdns-token` (set by the user — never print or commit it).
+- EC2 `creditdesk-demo` (`i-05aa510909db6ffbc`) launched with `infra/aws/launch-ec2.sh`; bootstrap verified (k3s Ready, ingress-nginx + cert-manager Running, DuckDNS OK, NGINX 404 at the domain). Currently **stopped**.
+- Repo variables `AWS_ROLE_ARN`, `EC2_INSTANCE_ID` set; start/stop workflow tested OK.
+- Gotcha solved: this repo's OIDC `sub` uses immutable IDs — `repo:vanilds@45978471/vanilds.github.io@1446370476:ref:refs/heads/main`. The trust policy must match it.
+
+## Roadmap
+
+1. **Phase 1 — CRUD backend** ← next: `api/` Spring Boot service for customers and proposals, Postgres + Flyway, CPF/CNPJ validation, pagination/filters, RFC 9457, OpenAPI, Testcontainers, `docker compose up`, `.devcontainer` for Codespaces.
+2. Phase 2 — Keycloak, roles, workflow transitions, optimistic locking, audit log, masking.
+3. Phase 3 — shell (portfolio + resume) on GitHub Pages + two micro frontends.
+4. Phase 4 — outbox → RabbitMQ, DLQ, LangGraph worker, presigned S3 uploads.
+5. Phase 5 — kind locally (Codespaces): ingress, probes, limits, HPA.
+6. Phase 6 — deploy to EC2: GHCR multi-arch images, `k8s/overlays/aws`, TLS, Argo CD, SSM secrets.
+7. Phase 7 — Prometheus/Grafana, tracing by correlation-id, daily `pg_dump` to S3 + restore test, incident drills in `docs/`.
+
+## Working agreements
+
+- Build phase by phase; explain decisions in Portuguese so the user can defend them in interviews; she runs and commits each phase.
+- Ask before anything that costs money, publishes, or changes security settings. Never type passwords/tokens or operate the AWS root user.
+- Commit trailer: `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
