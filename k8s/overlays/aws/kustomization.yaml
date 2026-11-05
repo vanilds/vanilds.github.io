@@ -5,6 +5,7 @@
 #   - real Amazon S3, reached with the instance role: no S3 endpoint, no keys
 #   - secrets read from SSM Parameter Store by External Secrets (nothing secret in git or on disk)
 #   - smaller memory reservations, so everything fits on one 4 GB node next to k3s and the add-ons
+#   - Keycloak locked down for the Internet: no admin console, no password grant (see keycloak-admin.yaml)
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: creditdesk
@@ -12,6 +13,7 @@ resources:
   - ../../base
   - secrets.yaml        # SecretStore (SSM) + ExternalSecret → Secret creditdesk-secrets
   - https-redirect.yaml # Traefik middleware for the http → https redirect
+  - keycloak-admin.yaml # /auth/admin answers 403 from the Internet
 
 # Release: one tag for all five images (see .github/workflows/images.yml). "main" only until the first release.
 images:
@@ -105,6 +107,14 @@ patches:
       - op: replace
         path: /spec/template/spec/containers/0/resources
         value: { requests: { cpu: 50m, memory: 192Mi }, limits: { memory: 384Mi } }
+  # The dev-only client "creditdesk-cli" (password grant: username + password straight to the token endpoint)
+  # stays in the realm file for docker compose and kind, but is switched off here. The realm reads this variable
+  # at import (infra/keycloak/creditdesk-realm.json); the browser login (code + PKCE) is unaffected.
+  - target: { kind: Deployment, name: keycloak }
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value: { name: CREDITDESK_PASSWORD_GRANT, value: "false" }
   # On a brand-new cluster Argo CD may sync this app before KEDA's CRDs exist (see secrets.yaml): create the rest
   # and retry the ScaledObject instead of failing the whole sync on its dry run.
   - target: { kind: ScaledObject, name: ai-worker }

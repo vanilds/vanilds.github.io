@@ -1,0 +1,36 @@
+# Keycloak's admin console and admin REST API (/auth/admin/...) are not reachable from the Internet.
+#
+# Nothing in the demo needs them: the realm (clients, roles, demo users) is imported from git at every start
+# (infra/keycloak/creditdesk-realm.json), so a change made in the console would be lost at the next restart
+# anyway — changes go through a pull request, like everything else in the cluster. The admin password in SSM
+# stays as a second lock, and Keycloak's own logs (kubectl logs deploy/keycloak) are the debugging tool.
+#
+# How: a second Ingress for the longer path /auth/admin (Traefik gives a longer rule priority over /auth) whose
+# only middleware allows nobody from outside: ipAllowList with 127.0.0.1 answers 403 to every real client.
+# Login pages (/auth/realms/...) and everything else keep using the main Ingress.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: deny-all
+spec:
+  ipAllowList:
+    sourceRange: ["127.0.0.1/32"]
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: keycloak-admin
+  annotations:
+    traefik.ingress.kubernetes.io/router.middlewares: creditdesk-https-redirect@kubernetescrd,creditdesk-deny-all@kubernetescrd
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts: [creditdesk.duckdns.org]
+      secretName: creditdesk-tls     # the certificate of the main Ingress (same host)
+  rules:
+    - host: creditdesk.duckdns.org
+      http:
+        paths:
+          - path: /auth/admin
+            pathType: Prefix
+            backend: { service: { name: keycloak, port: { name: http } } }

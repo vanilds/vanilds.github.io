@@ -73,7 +73,7 @@
       "publicClient": true,
       "standardFlowEnabled": false,
       "implicitFlowEnabled": false,
-      "directAccessGrantsEnabled": true,
+      "directAccessGrantsEnabled": "${CREDITDESK_PASSWORD_GRANT:true}",
       "serviceAccountsEnabled": false,
       "protocolMappers": [
         {

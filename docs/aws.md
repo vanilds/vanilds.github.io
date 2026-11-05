@@ -53,6 +53,7 @@ EC2 (k3s) ── Argo CD polls main ◀──┘──▶ applies k8s/overlays/a
 | Get the Argo CD admin password | Inside a session: `sudo k3s kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' \| base64 -d` — never paste it anywhere. |
 | Change a secret | `aws ssm put-parameter --name /creditdesk/app/<KEY> --type SecureString --overwrite --value=…` (never the two `DOCUMENT_*` keys), then restart the pods that use it. |
 | Use a language model for the opinions | Create `/creditdesk/app/LLM_API_KEY`, add it to `k8s/overlays/aws/secrets.yaml`, set `LLM_BASE_URL` / `LLM_MODEL` in the overlay. |
+| Change the Keycloak realm | Edit `infra/keycloak/creditdesk-realm.json` and merge: the realm is re-imported at every start. The admin console is deliberately unreachable from the Internet (403). |
 | Start over | `bash recreate-ec2.sh`. The cluster is rebuilt from git; SSM secrets and S3 documents are untouched; the database is reseeded (backups come in Phase 7). |
 
 ## Why it is built this way
