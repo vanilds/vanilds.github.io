@@ -13,7 +13,7 @@
 
     <groupId>io.github.vanilds</groupId>
     <artifactId>creditdesk-api</artifactId>
-    <version>0.1.0</version>
+    <version>0.2.0</version>
     <name>creditdesk-api</name>
     <description>CreditDesk — credit and renegotiation proposals API</description>
 
@@ -31,6 +31,12 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-validation</artifactId>
+        </dependency>
+
+        <!-- Security: the API is an OAuth2 resource server; Keycloak issues the JWTs -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-oauth2-resource-server</artifactId>
         </dependency>
 
         <!-- Persistence -->
@@ -74,6 +80,11 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.security</groupId>
+            <artifactId>spring-security-test</artifactId>
             <scope>test</scope>
         </dependency>
         <dependency>

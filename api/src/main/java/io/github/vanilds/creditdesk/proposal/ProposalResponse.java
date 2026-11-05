@@ -19,7 +19,10 @@ public record ProposalResponse(
         @Schema(description = "installmentAmount × installments", example = "19012.08")
         BigDecimal totalAmount,
         ProposalStatus status,
+        @Schema(description = "Keycloak id of the analyst who owns the proposal")
         String analystId,
+        @Schema(example = "ana")
+        String analystName,
         Instant createdAt,
         Instant updatedAt,
         long version
@@ -31,6 +34,6 @@ public record ProposalResponse(
                 proposal.getCustomer().getName(), proposal.getKind(), proposal.getAmount(),
                 proposal.getInstallments(), proposal.getMonthlyRate(), installment,
                 PriceTable.total(installment, proposal.getInstallments()), proposal.getStatus(),
-                proposal.getAnalystId(), proposal.getCreatedAt(), proposal.getUpdatedAt(), proposal.getVersion());
+                proposal.getAnalystId(), proposal.getAnalystName(), proposal.getCreatedAt(), proposal.getUpdatedAt(), proposal.getVersion());
     }
 }

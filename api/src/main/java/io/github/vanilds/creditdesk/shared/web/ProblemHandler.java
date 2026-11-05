@@ -45,11 +45,14 @@ public class ProblemHandler extends ResponseEntityExceptionHandler {
         return problem(ex.getStatus(), ex.getSlug(), ex.getTitle(), ex.getMessage());
     }
 
-    /** Two users saved the same record at once; the second one must reload and try again. */
+    /**
+     * Two users passed the If-Match check at the same instant; JPA's version check at UPDATE time stops the second.
+     * Same answer as a stale If-Match (412), because for the client it is the same situation.
+     */
     @ExceptionHandler(ObjectOptimisticLockingFailureException.class)
     ProblemDetail handleOptimisticLock(ObjectOptimisticLockingFailureException ex) {
-        return problem(HttpStatus.CONFLICT, "concurrent-update", "Concurrent update",
-                "This record was changed by someone else. Reload it and try again.");
+        ApiException stale = ETags.stale();
+        return problem(stale.getStatus(), stale.getSlug(), stale.getTitle(), stale.getMessage());
     }
 
     /**
@@ -59,7 +62,7 @@ public class ProblemHandler extends ResponseEntityExceptionHandler {
     @ExceptionHandler(DataIntegrityViolationException.class)
     ProblemDetail handleIntegrity(DataIntegrityViolationException ex) {
         String message = String.valueOf(ex.getMostSpecificCause().getMessage());
-        if (message.contains("customer_document_active_uk")) {
+        if (message.contains("customer_document_hash_active_uk")) {
             return problem(HttpStatus.CONFLICT, "duplicate-document", "Duplicate document",
                     "A customer with this document already exists.");
         }

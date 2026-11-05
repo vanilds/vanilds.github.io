@@ -12,9 +12,10 @@
     "cpus": 2,
     "memory": "8gb"
   },
-  "forwardPorts": [8080, 5432],
+  "forwardPorts": [8080, 8180, 5432],
   "portsAttributes": {
     "8080": { "label": "API", "onAutoForward": "notify" },
+    "8180": { "label": "Keycloak", "onAutoForward": "silent" },
     "5432": { "label": "PostgreSQL", "onAutoForward": "silent" }
   },
   // Download Maven and all dependencies once, when the codespace is created

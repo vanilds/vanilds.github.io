@@ -1,0 +1,168 @@
+{
+  "realm": "creditdesk",
+  "displayName": "CreditDesk",
+  "enabled": true,
+  "sslRequired": "external",
+  "accessTokenLifespan": 300,
+  "ssoSessionIdleTimeout": 1800,
+  "bruteForceProtected": true,
+  "failureFactor": 5,
+  "permanentLockout": false,
+  "waitIncrementSeconds": 60,
+  "registrationAllowed": false,
+  "resetPasswordAllowed": false,
+  "rememberMe": false,
+  "roles": {
+    "realm": [
+      {
+        "name": "ANALYST",
+        "description": "Registers customers, creates and submits own proposals"
+      },
+      {
+        "name": "MANAGER",
+        "description": "Analyst + decides proposals created by others (four-eyes)"
+      },
+      {
+        "name": "AUDITOR",
+        "description": "Read-only; reads the audit trail and can reveal a CPF with a reason"
+      }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "creditdesk-web",
+      "name": "CreditDesk front-end (Angular shell + micro frontends)",
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "frontchannelLogout": true,
+      "redirectUris": [
+        "http://localhost:4200/*",
+        "https://vanilds.github.io/*"
+      ],
+      "webOrigins": [
+        "+"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "+"
+      },
+      "protocolMappers": [
+        {
+          "name": "audience: creditdesk-api",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.custom.audience": "creditdesk-api",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "introspection.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "creditdesk-cli",
+      "name": "Local development only (requests.http, curl)",
+      "description": "Password grant for testing the API by hand. Never enable outside local development.",
+      "publicClient": true,
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": false,
+      "protocolMappers": [
+        {
+          "name": "audience: creditdesk-api",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.custom.audience": "creditdesk-api",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "introspection.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "id": "a0000000-0000-4000-8000-000000000001",
+      "username": "ana",
+      "email": "ana@creditdesk.example.com",
+      "firstName": "Ana",
+      "lastName": "Analista",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "ana-demo",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "ANALYST"
+      ]
+    },
+    {
+      "id": "a0000000-0000-4000-8000-000000000002",
+      "username": "bruno",
+      "email": "bruno@creditdesk.example.com",
+      "firstName": "Bruno",
+      "lastName": "Analista",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "bruno-demo",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "ANALYST"
+      ]
+    },
+    {
+      "id": "a0000000-0000-4000-8000-000000000003",
+      "username": "marcos",
+      "email": "marcos@creditdesk.example.com",
+      "firstName": "Marcos",
+      "lastName": "Gerente",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "marcos-demo",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "MANAGER"
+      ]
+    },
+    {
+      "id": "a0000000-0000-4000-8000-000000000004",
+      "username": "aline",
+      "email": "aline@creditdesk.example.com",
+      "firstName": "Aline",
+      "lastName": "Auditora",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "aline-demo",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "AUDITOR"
+      ]
+    }
+  ]
+}

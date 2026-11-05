@@ -226,11 +226,11 @@ erDiagram
 stateDiagram-v2
     [*] --> DRAFT
     DRAFT --> SUBMITTED: analyst submits
-    SUBMITTED --> IN_ANALYSIS: AI opinion ready
+    SUBMITTED --> IN_ANALYSIS: AI opinion ready, or a manager picks it up
     IN_ANALYSIS --> APPROVED: manager approves
-    IN_ANALYSIS --> REJECTED: manager rejects
-    IN_ANALYSIS --> DRAFT: returned for changes
-    DRAFT --> CANCELLED
+    IN_ANALYSIS --> REJECTED: manager rejects (reason)
+    IN_ANALYSIS --> DRAFT: returned for changes (reason)
+    DRAFT --> CANCELLED: analyst cancels
     APPROVED --> [*]
     REJECTED --> [*]
     CANCELLED --> [*]
@@ -240,9 +240,11 @@ stateDiagram-v2
 
 | Role | Can do |
 |---|---|
-| `ANALYST` | CRUD customers, create/edit/submit own proposals, upload documents |
-| `MANAGER` | Everything an analyst can, plus approve/reject/return proposals |
-| `AUDITOR` | Read-only access to proposals and the audit trail (unmasking data requires a reason, which is itself audited) |
+| `ANALYST` | CRUD customers, create/edit/submit/cancel **own** proposals, upload documents |
+| `MANAGER` | Everything an analyst can, plus start analysis/approve/reject/return proposals **created by someone else** (four-eyes principle) |
+| `AUDITOR` | Read-only access to customers, proposals and the audit trail; can reveal a full CPF by giving a reason, which is itself audited |
+
+Every change writes, in the same database transaction, a line to the proposal's status timeline (read by the analyst) and to the append-only audit log (read by managers and auditors), with the user, the request's `X-Correlation-Id` and personal data masked. CPF/CNPJ are stored encrypted (AES-256-GCM) with an HMAC for search; the database never holds them in clear.
 
 ---
 
@@ -307,23 +309,25 @@ flowchart LR
 
 ---
 
-## 6. API (first cut)
+## 6. API
 
 | Method | Path | Notes |
 |---|---|---|
 | `GET` | `/api/customers?document=&name=&page=&size=` | Paginated search, document returned masked |
 | `POST` | `/api/customers` | CPF/CNPJ validation (check digits), duplicate check |
-| `GET` / `PUT` / `DELETE` | `/api/customers/{id}` | Soft delete; blocked if there are open proposals |
-| `GET` | `/api/proposals?status=&from=&to=&customerId=` | Max 90-day window, 20/50/100 page sizes |
-| `POST` | `/api/proposals` | Creates a `DRAFT` |
-| `PUT` | `/api/proposals/{id}` | Only in `DRAFT`; `If-Match` for optimistic locking |
-| `POST` | `/api/proposals/{id}/submit` · `/approve` · `/reject` · `/return` | Workflow transitions, role-checked |
-| `POST` | `/api/proposals/{id}/documents/upload-url` · `/{docId}/confirm` | Presigned S3 upload |
-| `GET` | `/api/audit?entity=&actor=` | `AUDITOR` / `MANAGER` only |
+| `GET` / `PUT` / `DELETE` | `/api/customers/{id}` | `ETag` on read, `If-Match` on write; soft delete blocked while there are open proposals |
+| `POST` | `/api/customers/{id}/document/reveal` | `AUDITOR` only, reason required, audited |
+| `GET` | `/api/proposals?status=&from=&to=&customerId=&mine=` | Max 90-day window, 20/50/100 page sizes |
+| `POST` | `/api/proposals` | Creates a `DRAFT` owned by the caller |
+| `PUT` | `/api/proposals/{id}` | Owner only, only in `DRAFT`; `If-Match` |
+| `POST` | `/api/proposals/{id}/submit` · `/cancel` · `/start-analysis` · `/approve` · `/reject` · `/return` | Workflow commands: role, owner and four-eyes checks; `If-Match` |
+| `GET` | `/api/proposals/{id}/history` | Status timeline with who and why |
+| `POST` | `/api/proposals/{id}/documents/upload-url` · `/{docId}/confirm` | Presigned S3 upload (Phase 4) |
+| `GET` | `/api/audit?entityType=&entityId=&actorId=&action=&from=&to=` | `MANAGER` / `AUDITOR` only |
 
-Errors follow RFC 9457 (`application/problem+json`). The contract lives in `api/openapi.yaml` and the front-ends generate their clients from it.
+Every `/api` call needs a Keycloak access token (`Authorization: Bearer …`). Errors follow RFC 9457 (`application/problem+json`), including 401, 403, 412 and 428. The contract lives in `api/openapi.yaml` and the front-ends generate their clients from it.
 
-Phase 1 implements customers and proposal create/read/update; how to run it and the design decisions are in [`api/README.md`](api/README.md).
+How to run it, the demo users and the design decisions are in [`api/README.md`](api/README.md).
 
 ---
 
@@ -373,7 +377,7 @@ vanilds.github.io/
 ## 9. Roadmap
 
 - [x] **Phase 1 — CRUD backend**: customers and proposals in Spring Boot, Postgres + Flyway, CPF/CNPJ validation, pagination and filters, RFC 9457 errors, OpenAPI, Testcontainers, `docker compose up` in Codespaces.
-- [ ] **Phase 2 — Security & workflow**: Keycloak realm with `ANALYST`/`MANAGER`/`AUDITOR`, JWT resource server, workflow transitions, optimistic locking, audit log, data masking.
+- [x] **Phase 2 — Security & workflow**: Keycloak realm with `ANALYST`/`MANAGER`/`AUDITOR`, JWT resource server, workflow with ownership and four-eyes, optimistic locking with `ETag`/`If-Match`, append-only audit log, CPF/CNPJ encrypted at rest, data masking.
 - [ ] **Phase 3 — Portfolio & micro frontends**: shell with portfolio + resume on GitHub Pages, `mfe-customers` + `mfe-proposals` with Native Federation, offline fallback, clients generated from OpenAPI.
 - [ ] **Phase 4 — Events, AI & S3**: transactional outbox → RabbitMQ, retry/DLQ, idempotent LangGraph worker, presigned S3 uploads.
 - [ ] **Phase 5 — Kubernetes locally**: kind in Codespaces with Ingress, probes, limits, HPA.

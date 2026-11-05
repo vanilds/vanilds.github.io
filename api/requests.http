@@ -1,19 +1,70 @@
 ### CreditDesk API — manual requests
 ### Open in VS Code / Codespaces with the "REST Client" extension and click "Send Request" above each block.
-### Start the stack first: `docker compose up --build` (repository root).
+### Start the stack first: `docker compose up --build` (repository root). Demo users: infra/keycloak/README.md.
+###
+### Run the 4 login requests first: the others reuse their tokens ({{ana.response.body.access_token}} etc.).
+### Tokens last 5 minutes — when you get a 401, just send the login again.
 
 @base = http://localhost:8080
+@token_url = http://localhost:8180/realms/creditdesk/protocol/openid-connect/token
 
-### Search customers (CPF comes back masked)
+### ── Login (password grant: local development only) ──────────────────────────────────────────────
+
+# @name ana
+POST {{token_url}}
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=password&client_id=creditdesk-cli&username=ana&password=ana-demo
+
+###
+# @name bruno
+POST {{token_url}}
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=password&client_id=creditdesk-cli&username=bruno&password=bruno-demo
+
+###
+# @name marcos
+POST {{token_url}}
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=password&client_id=creditdesk-cli&username=marcos&password=marcos-demo
+
+###
+# @name aline
+POST {{token_url}}
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=password&client_id=creditdesk-cli&username=aline&password=aline-demo
+
+### ── Security basics ───────────────────────────────────────────────────────────────────────────
+
+### No token → 401 problem + WWW-Authenticate: Bearer
+GET {{base}}/api/customers
+
+### Auditor trying to write → 403
+POST {{base}}/api/customers
+Authorization: Bearer {{aline.response.body.access_token}}
+Content-Type: application/json
+
+{ "type": "PF", "document": "529.982.247-25", "name": "Not Allowed", "email": "x@example.com", "monthlyRevenue": 1 }
+
+### ── Customers (analyst) ───────────────────────────────────────────────────────────────────────
+
+### Search customers (CPF comes back masked; the database only has it encrypted)
 GET {{base}}/api/customers?size=20
+Authorization: Bearer {{ana.response.body.access_token}}
 
-### Search by part of the name, case-insensitive
-GET {{base}}/api/customers?name=silva
+### Search by document — works through the HMAC hash, without decrypting anything
+GET {{base}}/api/customers?document=41.395.376/0001-20
+Authorization: Bearer {{ana.response.body.access_token}}
 
 ### Register an individual (PF) — the CPF below is a generated test number
 # @name newCustomer
 POST {{base}}/api/customers
+Authorization: Bearer {{ana.response.body.access_token}}
 Content-Type: application/json
+X-Correlation-Id: requests-http-0001
 
 {
   "type": "PF",
@@ -25,53 +76,36 @@ Content-Type: application/json
 
 ### Same document again → 409 duplicate-document
 POST {{base}}/api/customers
+Authorization: Bearer {{ana.response.body.access_token}}
 Content-Type: application/json
 
-{
-  "type": "PF",
-  "document": "52998224725",
-  "name": "Maria Duplicada",
-  "email": "dup@example.com",
-  "monthlyRevenue": 100
-}
+{ "type": "PF", "document": "52998224725", "name": "Maria Duplicada", "email": "dup@example.com", "monthlyRevenue": 100 }
 
-### Invalid CPF → 400 with the field error
-POST {{base}}/api/customers
-Content-Type: application/json
+### Read it: the response carries ETag: "0"
+GET {{base}}/api/customers/{{newCustomer.response.body.id}}
+Authorization: Bearer {{ana.response.body.access_token}}
 
-{
-  "type": "PF",
-  "document": "529.982.247-24",
-  "name": "Check Digit Wrong",
-  "email": "x@example.com",
-  "monthlyRevenue": 100
-}
-
-### Company (PJ) with the new alphanumeric CNPJ (Receita Federal's example)
-POST {{base}}/api/customers
-Content-Type: application/json
-
-{
-  "type": "PJ",
-  "document": "12.ABC.345/01DE-35",
-  "name": "Exemplo Alfanumérico Ltda",
-  "email": "financeiro@example.com",
-  "monthlyRevenue": 320000
-}
-
-### Update the customer created above
+### Update WITHOUT If-Match → 428 precondition-required
 PUT {{base}}/api/customers/{{newCustomer.response.body.id}}
+Authorization: Bearer {{ana.response.body.access_token}}
 Content-Type: application/json
 
-{
-  "name": "Maria da Silva Souza",
-  "email": "maria.souza@example.com",
-  "monthlyRevenue": 9200.00
-}
+{ "name": "Maria da Silva Souza", "email": "maria.souza@example.com", "monthlyRevenue": 9200.00 }
 
-### Create a proposal (always DRAFT) — response includes the Tabela Price installment
+### Update with the version you read → 200, ETag: "1". Send it twice: the second one is 412 (stale)
+PUT {{base}}/api/customers/{{newCustomer.response.body.id}}
+Authorization: Bearer {{ana.response.body.access_token}}
+If-Match: "0"
+Content-Type: application/json
+
+{ "name": "Maria da Silva Souza", "email": "maria.souza@example.com", "monthlyRevenue": 9200.00 }
+
+### ── Proposal workflow ─────────────────────────────────────────────────────────────────────────
+
+### Ana creates a proposal (DRAFT, owned by ana, ETag "0")
 # @name newProposal
 POST {{base}}/api/proposals
+Authorization: Bearer {{ana.response.body.access_token}}
 Content-Type: application/json
 
 {
@@ -82,28 +116,84 @@ Content-Type: application/json
   "monthlyRate": 0.0199
 }
 
-### Edit the draft
-PUT {{base}}/api/proposals/{{newProposal.response.body.id}}
+### Bruno tries to submit Ana's proposal → 403 not-proposal-owner
+POST {{base}}/api/proposals/{{newProposal.response.body.id}}/submit
+Authorization: Bearer {{bruno.response.body.access_token}}
+If-Match: "0"
+
+### Ana submits → SUBMITTED, ETag "1"
+POST {{base}}/api/proposals/{{newProposal.response.body.id}}/submit
+Authorization: Bearer {{ana.response.body.access_token}}
+If-Match: "0"
+
+### Ana tries to start the analysis → 403 (analysts cannot decide proposals)
+POST {{base}}/api/proposals/{{newProposal.response.body.id}}/start-analysis
+Authorization: Bearer {{ana.response.body.access_token}}
+If-Match: "1"
+
+### Marcos (manager) picks it up → IN_ANALYSIS, ETag "2"
+POST {{base}}/api/proposals/{{newProposal.response.body.id}}/start-analysis
+Authorization: Bearer {{marcos.response.body.access_token}}
+If-Match: "1"
+
+### Approve with a stale version → 412 (it is "2" now)
+POST {{base}}/api/proposals/{{newProposal.response.body.id}}/approve
+Authorization: Bearer {{marcos.response.body.access_token}}
+If-Match: "1"
+
+### Return to the analyst (reason required) → DRAFT again, editable, ETag "3"
+POST {{base}}/api/proposals/{{newProposal.response.body.id}}/return
+Authorization: Bearer {{marcos.response.body.access_token}}
+If-Match: "2"
 Content-Type: application/json
 
-{
-  "kind": "NEW_CREDIT",
-  "amount": 18000.00,
-  "installments": 36,
-  "monthlyRate": 0.0189
-}
+{ "reason": "Missing proof of income" }
 
-### Delete a customer with an open proposal → 422
-DELETE {{base}}/api/customers/{{newCustomer.response.body.id}}
+### Ana edits the returned draft
+PUT {{base}}/api/proposals/{{newProposal.response.body.id}}
+Authorization: Bearer {{ana.response.body.access_token}}
+If-Match: "3"
+Content-Type: application/json
 
-### Proposals of the last 30 days (default), newest first
-GET {{base}}/api/proposals
+{ "kind": "NEW_CREDIT", "amount": 12000.00, "installments": 24, "monthlyRate": 0.0199 }
+
+### Timeline: who moved it, when and why
+GET {{base}}/api/proposals/{{newProposal.response.body.id}}/history
+Authorization: Bearer {{ana.response.body.access_token}}
+
+### Only my proposals
+GET {{base}}/api/proposals?mine=true
+Authorization: Bearer {{bruno.response.body.access_token}}
+
+### Approve from DRAFT → 422 invalid-transition
+POST {{base}}/api/proposals/{{newProposal.response.body.id}}/approve
+Authorization: Bearer {{marcos.response.body.access_token}}
+If-Match: "4"
 
 ### Filter by status and period (max 90 days)
-GET {{base}}/api/proposals?status=APPROVED&from=2026-09-01&to=2026-11-04&size=50
+GET {{base}}/api/proposals?status=APPROVED&size=50
+Authorization: Bearer {{marcos.response.body.access_token}}
 
-### Period longer than 90 days → 400 invalid-period
-GET {{base}}/api/proposals?from=2026-01-01&to=2026-11-04
+### ── Audit (manager, auditor) ──────────────────────────────────────────────────────────────────
 
-### Health probes used by Kubernetes
+### Everything that happened to the proposal above
+GET {{base}}/api/audit?entityType=PROPOSAL&entityId={{newProposal.response.body.id}}
+Authorization: Bearer {{aline.response.body.access_token}}
+
+### Analysts cannot read the audit trail → 403
+GET {{base}}/api/audit
+Authorization: Bearer {{ana.response.body.access_token}}
+
+### Auditor reveals the full CPF — reason mandatory, and the reveal itself is audited
+POST {{base}}/api/customers/{{newCustomer.response.body.id}}/document/reveal
+Authorization: Bearer {{aline.response.body.access_token}}
+Content-Type: application/json
+
+{ "reason": "Ticket SAC-0042: confirm customer identity" }
+
+### …and here it is in the trail, with the reason and the correlation id
+GET {{base}}/api/audit?entityId={{newCustomer.response.body.id}}
+Authorization: Bearer {{aline.response.body.access_token}}
+
+### Health probes used by Kubernetes (public)
 GET {{base}}/actuator/health/readiness

@@ -9,7 +9,7 @@ import java.util.UUID;
 
 public interface CustomerRepository extends JpaRepository<Customer, UUID>, JpaSpecificationExecutor<Customer> {
 
-    boolean existsByDocumentAndDeletedAtIsNull(String document);
+    boolean existsByDocumentHashAndDeletedAtIsNull(String documentHash);
 
     Optional<Customer> findByIdAndDeletedAtIsNull(UUID id);
 
@@ -23,8 +23,9 @@ public interface CustomerRepository extends JpaRepository<Customer, UUID>, JpaSp
             return (root, query, cb) -> cb.isNull(root.get("deletedAt"));
         }
 
-        static Specification<Customer> documentEquals(String document) {
-            return document == null ? null : (root, query, cb) -> cb.equal(root.get("document"), document);
+        /** Exact match on the document's HMAC — the only way to search an encrypted column. */
+        static Specification<Customer> documentHashEquals(String documentHash) {
+            return documentHash == null ? null : (root, query, cb) -> cb.equal(root.get("documentHash"), documentHash);
         }
 
         static Specification<Customer> nameContains(String name) {

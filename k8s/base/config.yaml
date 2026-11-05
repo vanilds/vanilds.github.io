@@ -13,7 +13,8 @@ data:
   PROPOSAL_EXCHANGE: "proposals"
   PROPOSAL_SUBMITTED_QUEUE: "proposal.submitted"
   AUDIT_QUEUE: "audit.events"
-  OIDC_ISSUER_URI: "http://creditdesk.local/auth/realms/creditdesk"
+  OIDC_ISSUER_URI: "http://creditdesk.local/auth/realms/creditdesk"          # public URL inside the tokens
+  OIDC_JWK_SET_URI: "http://keycloak:8080/auth/realms/creditdesk/protocol/openid-connect/certs"  # in-cluster
 ---
 # Dev-only placeholders. In real environments use Sealed Secrets / External Secrets.
 apiVersion: v1
@@ -30,3 +31,6 @@ stringData:
   S3_SECRET_KEY: "change-me-minio"
   LLM_API_KEY: "set-me-locally"
   KEYCLOAK_ADMIN_PASSWORD: "change-me-keycloak"
+  # 32 random bytes each, base64 (openssl rand -base64 32). From SSM Parameter Store in Phase 6.
+  DOCUMENT_ENCRYPTION_KEY: "set-me"
+  DOCUMENT_HASH_KEY: "set-me"

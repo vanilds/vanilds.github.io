@@ -16,6 +16,11 @@ public enum CustomerType {
         public String displayDocument(String document) {
             return BrazilianDocuments.maskCpf(document);
         }
+
+        @Override
+        public String formatDocument(String document) {
+            return BrazilianDocuments.formatCpf(document);
+        }
     },
 
     PJ {
@@ -29,9 +34,18 @@ public enum CustomerType {
         public String displayDocument(String document) {
             return BrazilianDocuments.formatCnpj(document);
         }
+
+        @Override
+        public String formatDocument(String document) {
+            return BrazilianDocuments.formatCnpj(document);
+        }
     };
 
     public abstract boolean isValidDocument(String document);
 
+    /** What every screen shows (masked when it is personal data). */
     public abstract String displayDocument(String document);
+
+    /** The full document, formatted; only for an audited reveal. */
+    public abstract String formatDocument(String document);
 }
