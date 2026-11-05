@@ -175,6 +175,7 @@ the latest backup. The demo seed (`R__Demo_data`) runs first on the empty databa
 |---|---|---|---|---|
 | 2026-11-05 | Restore test vs corrupted / incomplete dump (sandbox) | checksum failed; counts check failed, exit 1 | — | restore test fails loudly, as intended |
 | 2026-11-05 | Restore into a live database (sandbox) | drop → recreate → `pg_restore`; API restarted, Flyway validated 8 migrations | < 1 min | runbook steps 3–5 confirmed |
+| 2026-11-05 | First Phase 7 deploy (real, not a drill) | Grafana crash-looped: no disk → schema migrations at every start; under load (23 on 2 vCPU while the new images rolled out) they outlasted the liveness probe. Monitoring pods were first refused (PriorityClass not created yet). Prometheus/node-exporter restarted on probe timeouts during the peak. Demo stayed up (200s throughout). | ~25 min | Grafana: 1 Gi disk + startup probe + 384 Mi; PriorityClass sync-wave −1. Lesson: a probe tuned on an idle laptop is wrong on a busy node. |
 | | RabbitMQ down 5 min | | | |
 | | Kill the API pod | | | |
 | | Poison message → DLQ | | | |

@@ -6,6 +6,10 @@ apiVersion: scheduling.k8s.io/v1
 kind: PriorityClass
 metadata:
   name: creditdesk-observability
+  annotations:
+    # Created before the charts' pods (wave -1). On the first deploy the pods came first and were refused
+    # ("no PriorityClass ... was found") until a retry; a fresh cluster should come up in one pass.
+    argocd.argoproj.io/sync-wave: "-1"
 value: -100
 globalDefault: false
 preemptionPolicy: Never       # it never pushes another pod out to get scheduled either
