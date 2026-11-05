@@ -3,83 +3,87 @@
 How to see what the running system is doing, how its data is protected, and how to follow one request through
 it. Incidents and drills are in [incidents/README.md](incidents/README.md); AWS setup is in [aws.md](aws.md).
 
-## Turning Phase 7 on (once)
+## Turning monitoring on (once)
 
-1. **CloudShell**, before merging: `curl -fsSLO https://raw.githubusercontent.com/vanilds/vanilds.github.io/<branch>/infra/aws/create-secrets.sh && bash create-secrets.sh`
-   — creates `GRAFANA_ADMIN_PASSWORD`, keeps every existing parameter (it never overwrites).
-2. Merge. `Images` rebuilds (the API now publishes latency histograms) and Argo CD installs the `monitoring`
-   app and the two CronJobs within a few minutes: `sudo k3s kubectl -n argocd get applications`.
-3. First backup and restore test now instead of waiting for 19:30 / Friday:
+Grafana Cloud does the storing, querying, dashboards and alert evaluation; the node only runs Grafana Alloy and
+kube-state-metrics. Why: [the 2026-11-05 incident](incidents/README.md#incident-2026-11-05--the-first-phase-7-deploy-took-the-node-down).
+
+1. **grafana.com** (Free plan, no card): create a stack (region US East). Stack → Prometheus → *Details* gives the
+   *Remote Write Endpoint* and the *Username / Instance ID*. Put both in `k8s/monitoring/kustomization.yaml`
+   (`GRAFANA_CLOUD_PROM_URL`, `GRAFANA_CLOUD_PROM_USER`) — they are not secrets.
+2. **Access Policies** → policy `creditdesk-alloy`, scopes `metrics:write`, `rules:read`, `rules:write` → *Add token*.
+3. **CloudShell** — store the token in SSM without it ever showing on screen or in the shell history:
+   ```
+   read -rsp "Grafana Cloud token: " T && echo && aws ssm put-parameter --name /creditdesk/app/GRAFANA_CLOUD_TOKEN --type SecureString --value "$T" --tags Key=Project,Value=creditdesk >/dev/null && unset T && echo stored
+   ```
+   (to rotate it later: same command with `--overwrite` and without `--tags`).
+4. Merge. Argo CD replaces nothing else; Alloy starts sending within a minute (Grafana Cloud → Explore →
+   `up{cluster="creditdesk"}`).
+5. Alert rules: `curl -fsSLO https://raw.githubusercontent.com/vanilds/vanilds.github.io/main/infra/grafana-cloud/sync-rules.sh && bash sync-rules.sh --apply`
+6. Dashboards: Grafana Cloud → Dashboards → *New* → *Import* → upload `k8s/monitoring/dashboards/creditdesk-application.json`,
+   then `creditdesk-platform.json`; pick the `grafanacloud-…-prom` data source.
+7. First backup and restore test now, instead of waiting for 19:30 / Friday:
    `sudo k3s kubectl -n creditdesk create job --from=cronjob/postgres-backup backup-now`, wait until it completes,
-   then the same with `--from=cronjob/postgres-restore-test restore-now` and read its log
-   (`... logs job/restore-now --all-containers` ends with `RESTORE TEST PASSED`).
-4. Open Grafana (below) and check that both dashboards have data.
+   then the same with `--from=cronjob/postgres-restore-test restore-now`; its log ends with `RESTORE TEST PASSED`.
 
 ## What runs where
 
 ```
-monitoring namespace (priority -100: evicted first)       creditdesk namespace
-┌───────────────────────────────────────────────┐          ┌──────────────────────────────────────────┐
-│ Prometheus ── scrapes every 30 s ───────────────────────▶│ api /actuator/prometheus                 │
-│   3 days, ≤ 1.5 GB, alert + recording rules   │          │ ai-worker /metrics (while it has pods)   │
-│ kube-state-metrics (restarts, OOM, jobs, HPA) │          │ rabbitmq :15692 (queue depths, alarms)   │
-│ node-exporter (memory, swap, disk, CPU)       │          │ CronJobs: postgres-backup, restore-test  │
-│ Grafana ── reads Prometheus; dashboards = git │          └───────────────┬──────────────────────────┘
-└───────────────────────────────────────────────┘                          │ instance role
-                                                                           ▼
-                                               s3://creditdesk-backups-vanilds/postgres/YYYY/MM/DD/HHMMSS/
+EC2 node (k3s)                                                              Grafana Cloud (free tier)
+┌──────────────────────────────────────────────────────────────┐            ┌────────────────────────────┐
+│ creditdesk: api · ai-worker · rabbitmq :15692 · traefik      │            │ metrics (14 days)          │
+│          ▲ scrape every 30 s                                 │            │ recording + alert rules    │
+│ monitoring (priority −100, evicted first):                   │ remote     │ dashboards                 │
+│   Alloy ── pods, queues, cAdvisor, node /proc ─ allowlist ───┼──write───▶ │ alert notifications        │
+│   kube-state-metrics (restarts, OOM, jobs, HPA)              │  (HTTPS)   └────────────────────────────┘
+│ CronJobs: postgres-backup, postgres-restore-test ─────────────┼──▶ s3://creditdesk-backups-vanilds
+└──────────────────────────────────────────────────────────────┘
 ```
 
-Everything is installed by Argo CD from `k8s/argocd/apps/monitoring.yaml`. Values, rules and dashboards live in
-`k8s/monitoring/`; a change there is a commit, never a click.
+Everything on the node is installed by Argo CD from `k8s/argocd/apps/monitoring.yaml`. The pipeline is
+`k8s/monitoring/alloy/config.alloy`; rules (`k8s/monitoring/rules/`) and dashboards (`k8s/monitoring/dashboards/`)
+are in git and uploaded to Grafana Cloud. A change is a commit, never a click.
 
 ### Memory budget
 
-The node has 4 GB and ran at ~700 MB available before Phase 7. Monitoring reserves ~420 MiB (requests) and is
-limited to ~1 GiB in the worst case:
-
-| Pod | Request | Limit | What was given up for it |
+| Pod | Request | Limit | Measured |
 |---|---|---|---|
-| Prometheus | 192 Mi | 448 Mi | 30 s scrapes, 3-day history, no API-server/kubelet jobs, cAdvisor allowlist |
-| Grafana | 160 Mi | 384 Mi | no plugins, no sidecars: dashboards are files; a 1 Gi disk only so migrations run once |
-| kube-state-metrics | 32 Mi | 96 Mi | only the 8 object kinds the alerts read |
-| node-exporter | 24 Mi | 64 Mi | — |
+| Alloy (+ config reloader) | 96 Mi + 16 Mi | 256 Mi + 48 Mi | ~40 Mi in a test with the same config |
+| kube-state-metrics | 32 Mi | 96 Mi | ~20 Mi on the node |
 
-All of them run at `PriorityClass creditdesk-observability` (value −100). Under memory pressure the kubelet
-evicts the lowest priority first: losing graphs for an hour is a smaller incident than losing the demo.
+Before (in-cluster Prometheus + Grafana): ~420 Mi requested, and a startup peak the node could not absorb.
+Both pods run at `PriorityClass creditdesk-observability` (−100): under memory pressure they go first.
 
-## Opening Grafana and Prometheus
+### What leaves the node, and the free tier
 
-Neither is on the Internet. Same pattern as the Argo CD UI: a port forward inside the instance, carried to your
-computer by SSM (needs the AWS CLI + Session Manager plugin locally).
+The free tier counts active series (10,000) and keeps metrics 14 days. Alloy forwards **only metric names that
+a dashboard or a rule uses** (allowlist in `config.alloy`), and drops `/actuator` request series. CI
+(`k8s/monitoring/check_allowlist.py`) fails if a panel or rule uses a name the allowlist would drop.
 
-1. Password (CloudShell): `aws ssm get-parameter --name /creditdesk/app/GRAFANA_ADMIN_PASSWORD --with-decryption --query Parameter.Value --output text`
-2. Session 1, inside the instance: `sudo k3s kubectl -n monitoring port-forward svc/grafana 3000:80`
-3. Session 2, on your computer: `aws ssm start-session --target $ID --document-name AWS-StartPortForwardingSession --parameters portNumber=3000,localPortNumber=3000`
-4. Open http://localhost:3000, user `admin`. Dashboards → **CreditDesk** folder.
+When the EC2 is stopped (nights, weekends) nothing is sent: graphs have gaps, and that is expected. Rules that
+fire on missing data (`ApiDown`) only count while the node itself reports (`up{job="node"}`).
 
-Prometheus itself: the same with `svc/prometheus-server 9090:80` (Status → Targets shows what is scraped,
-Alerts shows every rule and its state).
+## Dashboards
 
 | Dashboard | Answers |
 |---|---|
 | CreditDesk — application | Is the demo working? Request rate, 5xx %, p95/p99 latency per route, outbox backlog, queue depths, dead letters, worker throughput and pods, JVM heap, GC, DB pool |
-| CreditDesk — platform | Is the node healthy? Memory + swap, CPU, memory per pod vs its limit, restarts, OOM kills, API replicas, disk, age of the last backup and restore test, Ingress 5xx |
+| CreditDesk — platform | Is the node healthy? Memory + swap, CPU, memory per pod vs its limit, restarts, OOM kills, API replicas, disk, age of the last backup and restore test, memory used by monitoring itself, Ingress 5xx |
 
-Dashboards are generated: edit `k8s/monitoring/dashboards/build.py`, run it, commit both files. CI fails if the
-JSON is stale.
+Dashboards are generated: edit `k8s/monitoring/dashboards/build.py`, run it, commit both files (CI fails if the
+JSON is stale), then re-import them in Grafana Cloud (*Import* → same uid → *Overwrite*). The data source is a
+dashboard variable, so the same JSON works in any Grafana.
 
 ## Alerts
 
-Rules are in `k8s/monitoring/prometheus-values.yaml` (`serverFiles.alerting_rules.yml`); each one links to its
-runbook in [incidents/README.md](incidents/README.md). They are evaluated by Prometheus and listed in Grafana
-under Alerting → Alert rules. There is **no notifier** on purpose: nobody is on call for a demo that is off at
-night, and Alertmanager is one more pod on a full node. The next step would be a Grafana contact point (e-mail)
-on the two `critical` rules.
+Rules are in `k8s/monitoring/rules/creditdesk.yaml` (plain Prometheus format, `promtool` in CI) and uploaded with
+`infra/grafana-cloud/sync-rules.sh` (shows the diff; `--apply` uploads). Grafana Cloud evaluates them; each one
+links to its runbook in [incidents/README.md](incidents/README.md). To be notified: Grafana Cloud → Alerting →
+Contact points → e-mail, and a notification policy for `severity=critical`.
 
 | Alert | Fires when | Why that threshold |
 |---|---|---|
-| ApiDown | no API pod scraped for 3 min | longer than a rolling update |
+| ApiDown | no API pod scraped for 3 min, while the node reports | longer than a rolling update; silent when the EC2 is off |
 | ApiErrorRateHigh | > 5 % 5xx for 5 min (with real traffic) | one error in a quiet minute is not an incident |
 | ApiSlow | p95 > 1 s for 10 min | the UI feels broken above ~1 s |
 | OutboxBacklog | > 20 events waiting 5 min | RabbitMQ is unreachable; proposals still work, events wait safely |
@@ -88,7 +92,7 @@ on the two `critical` rules.
 | RabbitMqMemoryAlarm | broker blocks publishers | everything that publishes stalls |
 | PodCrashLooping / ContainerOomKilled | ≥ 3 restarts in 15 min / last exit OOMKilled | |
 | NodeMemoryLow / NodeSwapHeavy | < 10 % available / > 60 % of swap | the node is about to evict or crawl |
-| NodeDiskFilling | < 15 % of / free | images, Prometheus data and the local-path volumes share it |
+| NodeDiskFilling | < 15 % of / free | images, the Alloy WAL and the local-path volumes share it |
 | BackupMissing | last successful backup > 72 h | the node is off from Friday 20:00 to Monday 08:00 (~60 h) |
 | BackupJobFailed | a backup or restore-test Job failed | stays until the failed Job is deleted (= acknowledged) |
 | CertificateExpiringSoon | TLS certificate < 14 days | cert-manager renews at 30 days: this means renewal is stuck |

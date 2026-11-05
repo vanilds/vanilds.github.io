@@ -1,0 +1,8 @@
+# kube-state-metrics: turns Kubernetes objects into metrics (restarts, OOM kills, replicas, backup jobs, limits).
+# The one thing Alloy cannot produce by itself. Measured ~20 MiB on the node.
+fullnameOverride: kube-state-metrics           # the Service Alloy looks for (config.alloy, job kube-state-metrics)
+priorityClassName: creditdesk-observability
+collectors: [cronjobs, deployments, horizontalpodautoscalers, jobs, pods]
+resources:
+  requests: { cpu: 10m, memory: 32Mi }
+  limits: { memory: 96Mi }

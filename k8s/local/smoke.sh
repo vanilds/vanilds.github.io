@@ -51,6 +51,20 @@ random_cpf() {
 
 echo "CreditDesk smoke test — public address $PUBLIC_URL"
 
+# "rollout status" says a Deployment WAS ready, not that it still is: on a slow runner the API can pass its
+# probes, then restart once while RabbitMQ is still starting (seen in CI on 2026-11-05: 503 "no available
+# server"). So wait until the API answers through the Ingress three times in a row (401 = up, no token sent).
+echo "Waiting for the API to be steadily ready"
+streak=0
+for _ in $(seq 1 60); do
+  call GET /api/customers >/dev/null || true
+  if [[ "$(status)" == 401 ]]; then streak=$((streak + 1)); else streak=0; fi
+  [[ $streak -ge 3 ]] && break
+  sleep 3
+done
+[[ $streak -ge 3 ]] || fail "API not steadily ready after 3 minutes (last HTTP $(status))"
+pass "API answers through the Ingress"
+
 echo "Front-ends"
 BODY=$(call GET /); expect 200 "shell index.html"
 grep -q '<cd-root' <<<"$BODY" || fail "shell index.html is not the Angular app"

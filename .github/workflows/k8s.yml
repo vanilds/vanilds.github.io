@@ -37,24 +37,22 @@ jobs:
         run: |
           kubectl kustomize k8s/overlays/aws > rendered-aws.yaml
           for f in k8s/argocd/root.yaml k8s/argocd/apps/*.yaml k8s/platform/*.yaml infra/aws/k3s/*.yaml; do echo ---; cat "$f"; done > rendered-gitops.yaml
-      - name: Render monitoring (k8s/monitoring + the two charts, at the versions in k8s/argocd/apps/monitoring.yaml)
+      - name: Render monitoring (k8s/monitoring + Alloy + kube-state-metrics, at the versions in k8s/argocd/apps/monitoring.yaml)
         run: |
           kubectl kustomize k8s/monitoring > rendered-monitoring.yaml
           version() { grep -A1 "chart: $1\$" k8s/argocd/apps/monitoring.yaml | sed -n 's/.*targetRevision: *\([^ ]*\).*/\1/p'; }
-          helm template prometheus prometheus --repo https://prometheus-community.github.io/helm-charts \
-            --version "$(version prometheus)" -n monitoring -f k8s/monitoring/prometheus-values.yaml >> rendered-monitoring.yaml
-          helm template grafana grafana --repo https://grafana-community.github.io/helm-charts \
-            --version "$(version grafana)" -n monitoring -f k8s/monitoring/grafana-values.yaml >> rendered-monitoring.yaml
-      - name: Alert and recording rules compile (promtool), dashboards are rebuilt from build.py
+          helm template alloy alloy --repo https://grafana.github.io/helm-charts \
+            --version "$(version alloy)" -n monitoring -f k8s/monitoring/alloy-values.yaml >> rendered-monitoring.yaml
+          helm template kube-state-metrics kube-state-metrics --repo https://prometheus-community.github.io/helm-charts \
+            --version "$(version kube-state-metrics)" -n monitoring -f k8s/monitoring/kube-state-metrics-values.yaml >> rendered-monitoring.yaml
+      - name: Alloy config is valid, rules compile (promtool), every used metric is forwarded, dashboards are fresh
         run: |
-          python3 - <<'PY'
-          import yaml
-          values = yaml.safe_load(open("k8s/monitoring/prometheus-values.yaml"))["serverFiles"]
-          for name in ("alerting_rules.yml", "recording_rules.yml"):
-              yaml.safe_dump(values[name], open(name, "w"))
-          PY
-          docker run --rm -v "$PWD:/w" -w /w --entrypoint promtool quay.io/prometheus/prometheus:v3.5.0 \
-            check rules alerting_rules.yml recording_rules.yml
+          alloy=$(sed -n 's/.*targetRevision: *[0-9.]* *# *Alloy \(v[0-9.]*\).*/\1/p' k8s/argocd/apps/monitoring.yaml)
+          docker run --rm -v "$PWD/k8s/monitoring/alloy:/c:ro" "grafana/alloy:$alloy" fmt /c/config.alloy > /tmp/fmt.alloy
+          diff -u k8s/monitoring/alloy/config.alloy /tmp/fmt.alloy || { echo "::error::run 'alloy fmt' on config.alloy"; exit 1; }
+          docker run --rm -v "$PWD/k8s/monitoring/rules:/r:ro" --entrypoint promtool quay.io/prometheus/prometheus:v3.5.0 \
+            check rules /r/creditdesk.yaml
+          python3 k8s/monitoring/check_allowlist.py
           python3 k8s/monitoring/dashboards/build.py
           git diff --exit-code k8s/monitoring/dashboards || { echo "::error::run k8s/monitoring/dashboards/build.py and commit the JSON"; exit 1; }
       - name: Validate against the Kubernetes and CRD schemas (KEDA, External Secrets, cert-manager, Traefik, Argo CD)

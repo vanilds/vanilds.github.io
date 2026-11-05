@@ -85,7 +85,7 @@
    },
    "datasource": {
     "type": "prometheus",
-    "uid": "prometheus"
+    "uid": "${datasource}"
    }
   },
   {
@@ -141,7 +141,7 @@
    },
    "datasource": {
     "type": "prometheus",
-    "uid": "prometheus"
+    "uid": "${datasource}"
    }
   },
   {
@@ -201,7 +201,7 @@
    },
    "datasource": {
     "type": "prometheus",
-    "uid": "prometheus"
+    "uid": "${datasource}"
    }
   },
   {
@@ -257,7 +257,7 @@
    },
    "datasource": {
     "type": "prometheus",
-    "uid": "prometheus"
+    "uid": "${datasource}"
    }
   },
   {
@@ -313,17 +313,17 @@
    },
    "datasource": {
     "type": "prometheus",
-    "uid": "prometheus"
+    "uid": "${datasource}"
    }
   },
   {
    "type": "stat",
-   "title": "Prometheus data",
-   "description": "",
+   "title": "Monitoring on the node",
+   "description": "Alloy + kube-state-metrics. In-cluster Prometheus + Grafana took the node down (incident 2026-11-05).",
    "targets": [
     {
      "refId": "A",
-     "expr": "sum(prometheus_tsdb_storage_blocks_bytes) + sum(prometheus_tsdb_head_chunks_storage_size_bytes)",
+     "expr": "sum(container_memory_working_set_bytes{namespace=\"monitoring\"})",
      "instant": true
     }
    ],
@@ -339,7 +339,11 @@
        },
        {
         "color": "orange",
-        "value": 1258291200
+        "value": 268435456
+       },
+       {
+        "color": "red",
+        "value": 419430400
        }
       ]
      },
@@ -365,7 +369,7 @@
    },
    "datasource": {
     "type": "prometheus",
-    "uid": "prometheus"
+    "uid": "${datasource}"
    }
   },
   {
@@ -427,7 +431,7 @@
    },
    "datasource": {
     "type": "prometheus",
-    "uid": "prometheus"
+    "uid": "${datasource}"
    }
   },
   {
@@ -479,7 +483,7 @@
    },
    "datasource": {
     "type": "prometheus",
-    "uid": "prometheus"
+    "uid": "${datasource}"
    }
   },
   {
@@ -544,7 +548,7 @@
    },
    "datasource": {
     "type": "prometheus",
-    "uid": "prometheus"
+    "uid": "${datasource}"
    }
   },
   {
@@ -582,7 +586,7 @@
    },
    "datasource": {
     "type": "prometheus",
-    "uid": "prometheus"
+    "uid": "${datasource}"
    }
   },
   {
@@ -634,7 +638,7 @@
    },
    "datasource": {
     "type": "prometheus",
-    "uid": "prometheus"
+    "uid": "${datasource}"
    }
   },
   {
@@ -686,7 +690,7 @@
    },
    "datasource": {
     "type": "prometheus",
-    "uid": "prometheus"
+    "uid": "${datasource}"
    }
   },
   {
@@ -743,7 +747,7 @@
    },
    "datasource": {
     "type": "prometheus",
-    "uid": "prometheus"
+    "uid": "${datasource}"
    }
   },
   {
@@ -795,7 +799,7 @@
    },
    "datasource": {
     "type": "prometheus",
-    "uid": "prometheus"
+    "uid": "${datasource}"
    }
   },
   {
@@ -860,7 +864,7 @@
    },
    "datasource": {
     "type": "prometheus",
-    "uid": "prometheus"
+    "uid": "${datasource}"
    }
   },
   {
@@ -912,14 +916,24 @@
    },
    "datasource": {
     "type": "prometheus",
-    "uid": "prometheus"
+    "uid": "${datasource}"
    }
   }
  ],
- "templating": {
-  "list": []
- },
  "annotations": {
   "list": []
+ },
+ "templating": {
+  "list": [
+   {
+    "name": "datasource",
+    "label": "Data source",
+    "type": "datasource",
+    "query": "prometheus",
+    "current": {},
+    "hide": 0,
+    "refresh": 1
+   }
+  ]
  }
 }

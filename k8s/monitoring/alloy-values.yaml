@@ -1,0 +1,67 @@
+# Grafana Alloy (chart grafana/alloy): one agent per node — here, one pod. Scrapes and ships; stores nothing for
+# long, queries nothing, renders nothing. The pipeline is k8s/monitoring/alloy/config.alloy.
+#
+# Why not Prometheus + Grafana in the cluster any more: docs/incidents/README.md, "Incident 2026-11-05".
+# Measured: ~40 MiB in the sandbox with the same config; limits leave room for the WAL during a Cloud outage.
+
+crds: { create: false }             # PodLogs CRD: not used (no logs shipped)
+
+alloy:
+  configMap:
+    create: false                   # built by kustomize from alloy/config.alloy (k8s/monitoring/kustomization.yaml)
+    name: alloy-config
+    key: config.alloy
+  stabilityLevel: generally-available
+  clustering: { enabled: false }    # one node, one agent
+
+  # Endpoint + user (ConfigMap, not secret) and the token (Secret from SSM): read with sys.env() in the config
+  envFrom:
+    - configMapRef: { name: grafana-cloud }
+    - secretRef: { name: grafana-cloud-token }
+  extraEnv:
+    - name: GOMEMLIMIT              # collect garbage harder before reaching the limit instead of being killed at it
+      value: "200MiB"
+
+  resources:
+    requests: { cpu: 25m, memory: 96Mi }
+    limits: { memory: 256Mi }
+
+  # The node's /proc, /sys and root filesystem, read-only, for prometheus.exporter.unix (memory, swap, disk, CPU)
+  mounts:
+    extra:
+      - { name: host-proc, mountPath: /host/proc, readOnly: true }
+      - { name: host-sys, mountPath: /host/sys, readOnly: true }
+      - { name: host-root, mountPath: /host/root, readOnly: true, mountPropagation: HostToContainer }
+
+configReloader:
+  resources:
+    requests: { cpu: 5m, memory: 16Mi }
+    limits: { memory: 48Mi }
+
+controller:
+  type: daemonset
+  priorityClassName: creditdesk-observability   # evicted before any CreditDesk pod (priority-class.yaml)
+  volumes:
+    extra:
+      - { name: host-proc, hostPath: { path: /proc } }
+      - { name: host-sys, hostPath: { path: /sys } }
+      - { name: host-root, hostPath: { path: / } }
+
+# Least privilege, instead of the chart's defaults (which include reading every Secret in the cluster):
+# discover pods, endpoints and services; read node objects and the kubelet's /metrics/cadvisor.
+rbac:
+  create: true
+  rules:
+    - apiGroups: [""]
+      resources: ["pods", "endpoints", "services"]
+      verbs: ["get", "list", "watch"]
+    - apiGroups: ["discovery.k8s.io"]
+      resources: ["endpointslices"]
+      verbs: ["get", "list", "watch"]
+  clusterRules:
+    - apiGroups: [""]
+      resources: ["nodes"]
+      verbs: ["get", "list", "watch"]
+    - apiGroups: [""]
+      resources: ["nodes/metrics"]
+      verbs: ["get"]
