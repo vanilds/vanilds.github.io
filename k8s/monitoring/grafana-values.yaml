@@ -1,0 +1,55 @@
+# Grafana: read-only view over Prometheus, dashboards from git. No database to back up, no plugins, no sidecars.
+# Opened through an SSM port forward (docs/operations.md); never exposed on the Internet.
+
+priorityClassName: creditdesk-observability
+deploymentStrategy: { type: Recreate }
+testFramework: { enabled: false }
+
+# Nothing worth persisting: dashboards and the datasource come from git, the only user is admin (password in SSM).
+# The SQLite file lives in an emptyDir and is rebuilt at every start.
+persistence: { enabled: false }
+
+admin:
+  existingSecret: grafana-admin       # k8s/monitoring/grafana-secret.yaml (External Secrets ← SSM)
+  userKey: admin-user
+  passwordKey: admin-password
+
+resources:
+  requests: { cpu: 25m, memory: 96Mi }
+  limits: { memory: 256Mi }
+
+grafana.ini:
+  analytics: { reporting_enabled: false, check_for_updates: false, check_for_plugin_updates: false }
+  news: { news_feed_enabled: false }
+  users: { allow_sign_up: false }
+  auth.anonymous: { enabled: false }
+  server: { root_url: http://localhost:3000 }   # the port forward's address
+  unified_alerting: { enabled: true }           # shows the Prometheus alert rules (Alerting → Alert rules)
+
+datasources:
+  datasources.yaml:
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        uid: prometheus                  # fixed uid: the dashboard JSON refers to it
+        type: prometheus
+        url: http://prometheus-server.monitoring.svc
+        access: proxy
+        isDefault: true
+        editable: false
+        jsonData:
+          timeInterval: 30s              # = scrape interval: $__rate_interval is never shorter than 4 scrapes
+
+dashboardProviders:
+  dashboardproviders.yaml:
+    apiVersion: 1
+    providers:
+      - name: creditdesk
+        folder: CreditDesk
+        type: file
+        disableDeletion: true
+        allowUiUpdates: false            # git is the source; a UI edit would be lost at the next restart anyway
+        options: { path: /var/lib/grafana/dashboards/creditdesk }
+
+dashboardsConfigMaps:
+  creditdesk: grafana-dashboards-creditdesk   # built by k8s/monitoring/dashboards/build.py

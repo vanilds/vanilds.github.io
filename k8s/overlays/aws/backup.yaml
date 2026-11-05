@@ -1,0 +1,229 @@
+# Database backups (Phase 7): a daily pg_dump to S3 and a weekly restore test that proves the dump is usable.
+#
+#   weekdays 19:30  postgres-backup        counts → pg_dump → checksum ──▶ s3://creditdesk-backups-vanilds/postgres/…
+#   Fridays  19:45  postgres-restore-test  latest dump ──▶ throwaway Postgres inside the pod ──▶ pg_restore + checks
+#
+# Times are São Paulo time (the EC2 runs weekdays 08:00–20:00). The bucket deletes objects after 30 days
+# (infra/aws/s3/lifecycle-backups.json). The pods reach S3 with the EC2 instance role: no keys anywhere.
+# The dump holds CPF/CNPJ only encrypted (AES-256-GCM); the keys live in SSM, never next to the backup.
+#
+# Restoring into production is a deliberate, manual act: docs/incidents/README.md#restore.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: postgres-backup
+spec:
+  schedule: "30 19 * * 1-5"
+  timeZone: America/Sao_Paulo
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 1800      # the node was busy or rebooting: still run if it is within 30 minutes
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 2          # a failed Job stays visible (alert BackupJobFailed) until it is looked at
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 900
+      template:
+        metadata:
+          labels: { app: postgres-backup }
+        spec:
+          restartPolicy: Never
+          enableServiceLinks: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 70              # "postgres" in the alpine image
+            runAsGroup: 70
+            fsGroup: 70
+            seccompProfile: { type: RuntimeDefault }
+          # Two steps in order, sharing one scratch folder: Postgres tools to dump, the AWS CLI to upload.
+          initContainers:
+            - name: dump
+              image: public.ecr.aws/docker/library/postgres:16-alpine   # same major as the server (pg_dump must not be older)
+              env:
+                - { name: PGHOST, value: postgres }
+                - name: PGDATABASE
+                  valueFrom: { configMapKeyRef: { name: creditdesk-config, key: DB_NAME } }
+                - name: PGUSER
+                  valueFrom: { secretKeyRef: { name: creditdesk-secrets, key: DB_USER } }
+                - name: PGPASSWORD
+                  valueFrom: { secretKeyRef: { name: creditdesk-secrets, key: DB_PASSWORD } }
+              command: ["/bin/sh", "-ec"]
+              args:
+                - |
+                  cd /backup
+                  # Counts BEFORE the dump. Customers and proposals are never deleted (soft delete) and the audit
+                  # log is append-only, so the restore test can require "restored >= counted" even if someone
+                  # used the demo while the dump ran.
+                  psql -v ON_ERROR_STOP=1 -At -c "
+                    SELECT json_build_object(
+                      'taken_at',       now(),
+                      'customers',      (SELECT count(*) FROM customer),
+                      'proposals',      (SELECT count(*) FROM proposal),
+                      'audit_log',      (SELECT count(*) FROM audit_log),
+                      'schema_version', (SELECT max(version::int) FROM flyway_schema_history WHERE success AND version IS NOT NULL))
+                  " > counts.json
+                  # Custom format: compressed, and pg_restore can pick tables or run in parallel
+                  pg_dump --format=custom --compress=6 --no-owner --no-privileges --file=creditdesk.dump
+                  pg_restore --list creditdesk.dump > /dev/null    # the file is a complete, readable archive
+                  sha256sum creditdesk.dump > creditdesk.dump.sha256
+                  echo "dump: $(du -h creditdesk.dump | cut -f1)  counts: $(cat counts.json)"
+              resources:
+                requests: { cpu: 50m, memory: 64Mi }
+                limits: { memory: 256Mi }
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities: { drop: [ALL] }
+              volumeMounts:
+                - { name: backup, mountPath: /backup }
+          containers:
+            - name: upload
+              image: public.ecr.aws/aws-cli/aws-cli:2.27.0
+              env:
+                - name: BUCKET
+                  valueFrom: { configMapKeyRef: { name: creditdesk-config, key: BACKUP_BUCKET } }
+                - { name: AWS_REGION, value: us-east-1 }
+                - { name: HOME, value: /tmp }          # the CLI writes a cache under $HOME
+                - { name: TZ, value: America/Sao_Paulo }
+              command: ["/bin/sh", "-ec"]
+              args:
+                - |
+                  cd /backup
+                  prefix="postgres/$(date +%Y/%m/%d/%H%M%S)"
+                  for f in creditdesk.dump creditdesk.dump.sha256 counts.json; do
+                    aws s3 cp --only-show-errors "$f" "s3://$BUCKET/$prefix/$f"
+                  done
+                  # Pointer to the newest backup, written last: if an upload above failed, it still names the
+                  # previous complete backup and the restore test keeps testing something whole.
+                  printf '{"prefix":"%s"}\n' "$prefix" > latest.json
+                  aws s3 cp --only-show-errors latest.json "s3://$BUCKET/postgres/latest.json"
+                  echo "uploaded s3://$BUCKET/$prefix/"
+              resources:
+                requests: { cpu: 50m, memory: 64Mi }
+                limits: { memory: 192Mi }
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities: { drop: [ALL] }
+              volumeMounts:
+                - { name: backup, mountPath: /backup }
+                - { name: tmp, mountPath: /tmp }
+          volumes:
+            - { name: backup, emptyDir: { sizeLimit: 512Mi } }
+            - { name: tmp, emptyDir: { sizeLimit: 64Mi } }
+---
+# The restore test never touches the real database: it starts its own Postgres inside the pod (an empty data
+# folder in an emptyDir, reachable only through a Unix socket), restores the latest dump there, checks it, and
+# the whole thing disappears with the pod. Run it by hand any time:
+#   kubectl -n creditdesk create job --from=cronjob/postgres-restore-test restore-test-now
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: postgres-restore-test
+spec:
+  schedule: "45 19 * * 5"
+  timeZone: America/Sao_Paulo
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 1800
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 2
+  jobTemplate:
+    spec:
+      backoffLimit: 0                  # a failed restore is the finding, not something to retry quietly
+      activeDeadlineSeconds: 900
+      template:
+        metadata:
+          labels: { app: postgres-restore-test }
+        spec:
+          restartPolicy: Never
+          enableServiceLinks: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 70
+            runAsGroup: 70
+            fsGroup: 70
+            seccompProfile: { type: RuntimeDefault }
+          initContainers:
+            - name: download
+              image: public.ecr.aws/aws-cli/aws-cli:2.27.0
+              env:
+                - name: BUCKET
+                  valueFrom: { configMapKeyRef: { name: creditdesk-config, key: BACKUP_BUCKET } }
+                - { name: AWS_REGION, value: us-east-1 }
+                - { name: HOME, value: /tmp }
+              command: ["/bin/sh", "-ec"]
+              args:
+                - |
+                  cd /backup
+                  aws s3 cp --only-show-errors "s3://$BUCKET/postgres/latest.json" latest.json
+                  prefix=$(sed -n 's/.*"prefix":"\([^"]*\)".*/\1/p' latest.json)
+                  [ -n "$prefix" ] || { echo "latest.json has no prefix"; exit 1; }
+                  for f in creditdesk.dump creditdesk.dump.sha256 counts.json; do
+                    aws s3 cp --only-show-errors "s3://$BUCKET/$prefix/$f" "$f"
+                  done
+                  sha256sum -c creditdesk.dump.sha256        # the file is exactly what the backup wrote
+                  echo "testing s3://$BUCKET/$prefix/"
+              resources:
+                requests: { cpu: 50m, memory: 64Mi }
+                limits: { memory: 192Mi }
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities: { drop: [ALL] }
+              volumeMounts:
+                - { name: backup, mountPath: /backup }
+                - { name: tmp, mountPath: /tmp }
+          containers:
+            - name: restore
+              image: public.ecr.aws/docker/library/postgres:16-alpine
+              command: ["/bin/sh", "-ec"]
+              args:
+                - |
+                  export PGDATA=/scratch/pgdata PGHOST=/scratch PGUSER=postgres
+                  initdb --auth=trust --username=postgres --no-sync >/dev/null
+                  # Small and quiet: no TCP port, no fsync (this data is thrown away), little memory
+                  pg_ctl start --wait --silent --log=/scratch/server.log -o "-c listen_addresses='' -c unix_socket_directories=/scratch \
+                    -c fsync=off -c shared_buffers=32MB -c max_connections=5"
+                  createdb creditdesk
+                  start=$(date +%s)
+                  pg_restore --exit-on-error --no-owner --no-privileges --dbname=creditdesk /backup/creditdesk.dump
+                  echo "restored in $(( $(date +%s) - start )) s"
+
+                  # Expected values, from the counts the backup took just before dumping
+                  get() { sed -n "s/.*\"$1\" *: *\([0-9]*\).*/\1/p" /backup/counts.json; }
+                  fail=0
+                  check() {   # check <name> <found> <minimum>: found must be >= minimum (see the backup's counts)
+                    if [ "$2" -ge "$3" ]; then echo "ok    $1: $2 (expected at least $3)"; else echo "FAIL  $1: $2 (expected at least $3)"; fail=1; fi
+                  }
+                  q() { psql -d creditdesk -At -v ON_ERROR_STOP=1 -c "$1"; }
+                  check customers "$(q 'SELECT count(*) FROM customer')" "$(get customers)"
+                  check proposals "$(q 'SELECT count(*) FROM proposal')" "$(get proposals)"
+                  check audit_log "$(q 'SELECT count(*) FROM audit_log')" "$(get audit_log)"
+                  check schema_version "$(q 'SELECT max(version::int) FROM flyway_schema_history WHERE success AND version IS NOT NULL')" "$(get schema_version)"
+                  # Referential integrity survived (constraints are re-created at the end of pg_restore, so a
+                  # broken dump fails above; this is a direct look at the data the demo depends on)
+                  orphans=$(q 'SELECT count(*) FROM proposal p LEFT JOIN customer c ON c.id = p.customer_id WHERE c.id IS NULL')
+                  if [ "$orphans" -eq 0 ]; then echo "ok    every proposal has its customer"; else echo "FAIL  $orphans proposals without a customer"; fail=1; fi
+                  # The audit log is still protected: its append-only trigger came back with the schema
+                  triggers=$(q "SELECT count(*) FROM pg_trigger WHERE tgrelid = 'audit_log'::regclass AND NOT tgisinternal")
+                  check "audit_log triggers (append-only, no truncate)" "$triggers" 2
+
+                  pg_ctl stop --wait --silent --mode=fast
+                  grep -E "ERROR|FATAL|PANIC" /scratch/server.log && fail=1   # anything the server complained about
+                  [ "$fail" -eq 0 ] && echo "RESTORE TEST PASSED" || { echo "RESTORE TEST FAILED"; exit 1; }
+              resources:
+                requests: { cpu: 100m, memory: 96Mi }
+                limits: { memory: 320Mi }
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities: { drop: [ALL] }
+              volumeMounts:
+                - { name: backup, mountPath: /backup, readOnly: true }
+                - { name: scratch, mountPath: /scratch }
+                - { name: run, mountPath: /var/run/postgresql }
+          volumes:
+            - { name: backup, emptyDir: { sizeLimit: 512Mi } }
+            - { name: tmp, emptyDir: { sizeLimit: 64Mi } }
+            - { name: scratch, emptyDir: { sizeLimit: 1Gi } }
+            - { name: run, emptyDir: { sizeLimit: 1Mi } }

@@ -14,6 +14,7 @@ resources:
   - secrets.yaml        # SecretStore (SSM) + ExternalSecret → Secret creditdesk-secrets
   - https-redirect.yaml # Traefik middleware for the http → https redirect
   - keycloak-admin.yaml # /auth/admin answers 403 from the Internet
+  - backup.yaml         # daily pg_dump to S3 + weekly restore test (Phase 7)
 
 # Release: one tag for all five images (see .github/workflows/images.yml). "main" only until the first release.
 images:
@@ -41,6 +42,8 @@ configMapGenerator:
       # Real S3: only bucket and region. No S3_ENDPOINT (the SDK uses AWS's own) and no keys (the SDK takes the
       # EC2 instance role from the metadata service; IMDSv2 hop limit 2 lets pods reach it).
       - S3_BUCKET=creditdesk-documents-vanilds
+      # Database dumps (backup.yaml). Objects expire after 30 days (infra/aws/s3/lifecycle-backups.json).
+      - BACKUP_BUCKET=creditdesk-backups-vanilds
 
 # The Secret is created by External Secrets (secrets.yaml), not by kustomize. The base's generator still runs,
 # so: a fixed name (no content hash: the hash of an empty generator says nothing) and the generated, empty

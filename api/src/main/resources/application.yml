@@ -81,6 +81,12 @@ management:
   info:
     env:
       enabled: true
+  metrics:
+    distribution:
+      # Latency as a histogram (buckets), not client-side percentiles: Prometheus can then compute p95 over any
+      # window and across pods. SLO buckets keep the series count small (one node, 3-day retention).
+      slo:
+        http.server.requests: 100ms, 250ms, 500ms, 1s, 2500ms, 5s   # durations are whole numbers: "2.5s" fails to bind
 
 info:
   app:

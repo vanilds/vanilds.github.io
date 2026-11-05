@@ -21,7 +21,7 @@ Read this first in any new session. It records decisions and the current state s
 - Repo docs and code in English; conversation with the user in Portuguese.
 - Diagrams follow the user's LinkedIn carousel look (navy grid, orange mono kicker, heavy white title). Sources in `docs/diagrams/src/` (`specs.py` + `render.mjs`, Mermaid + Puppeteer).
 
-## Current state (2026-11-05, Phase 6 done)
+## Current state (2026-11-05, Phase 7 code done, branch `phase-7-ops`)
 
 Done:
 - Repo created; README with architecture, domain model, flows and branded diagrams.
@@ -55,6 +55,7 @@ Done:
 - Ops via CloudShell without an interactive session: `aws ssm send-command --document-name AWS-RunShellScript` + `get-command-invocation` (read-only kubectl checks).
 - To watch: `ec2-schedule.yml` cron did not fire at 08:00 on 2026-11-05 (no `schedule` runs ever) — confirm the 20:00 stop; memory on the node ~590 MB free + ~660 MB swap used (Phase 7 dashboards). UX idea: forms should say why Save is disabled.
 - Gotcha: a compose service whose port bind failed once may come back without published ports — `docker compose up -d --force-recreate <service>`.
+- **Phase 7 (branch `phase-7-ops`)**: user chose monitoring INSIDE the cluster (not Grafana Cloud, not a bigger EC2). Measured before: node allocatable 3824 Mi, requests 2084 Mi (54%), ~700 MB available, 789 MB swap used; RabbitMQ idled at ~160m CPU (Erlang busy-wait → `RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS=+sbwt none …` in base). `k8s/argocd/apps/monitoring.yaml` = multi-source app: prometheus chart 29.40.3 (Prometheus v3.15) + grafana chart 14.3.1 from **grafana-community.github.io/helm-charts** (moved from grafana/helm-charts) + `k8s/monitoring` (ref `values`). Prometheus: 30 s, 3d / 1.5 GB, Recreate, PVC 2Gi, no alertmanager/pushgateway, no apiserver/kubelet jobs, cAdvisor metric allowlist, KSM 8 collectors, GOMEMLIMIT 400MiB; job `rabbitmq` (`/metrics/detailed` families queue_coarse_metrics + queue_consumer_count via Service port `metrics` 15692) and `rabbitmq-node` (alarms). Recording rules `creditdesk:http_*`; 16 alerts with `runbook` annotations → `docs/incidents/README.md` anchors. PriorityClass `creditdesk-observability` (−100, preemption Never) on all monitoring pods. Grafana: no persistence, admin from SSM `/creditdesk/app/GRAFANA_ADMIN_PASSWORD` via ExternalSecret (own SecretStore in `monitoring`; chart's random password would rotate on every Argo render), datasource uid `prometheus`, dashboards mounted from ConfigMap `grafana-dashboards-creditdesk` built by `k8s/monitoring/dashboards/build.py` (CI checks JSON is fresh + promtool rules). Access only by SSM port forward. API: SLO buckets on `http.server.requests`. Backups: `k8s/overlays/aws/backup.yaml` — `postgres-backup` weekdays 19:30 SP (counts → pg_dump -Fc → sha256 → `s3://creditdesk-backups-vanilds/postgres/Y/M/D/HMS/` + `postgres/latest.json` written last), `postgres-restore-test` Fridays 19:45 (throwaway Postgres in the pod on a Unix socket, checks counts ≥ backup's, schema version, FK, 2 audit_log triggers); config key `BACKUP_BUCKET`. aws-cli image `public.ecr.aws/aws-cli/aws-cli:2.27.0` (could not verify tags: ECR public rate-limited the sandbox). Trace: `infra/aws/ops/trace.sh <id> [24h]` (CloudShell → SSM → curl `trace-node.sh` from main: API/worker logs + outbox_event + audit_log, psql `:'id'` quoting, strict id regex). Docs: `docs/operations.md`, `docs/incidents/README.md` (runbooks + drills + drill log). Sandbox-verified: Prometheus v3.5 with the rendered rules against a real RabbitMQ (all panel queries parse, rules healthy), backup/restore scripts with the real schema from the published API image (uid 70, read-only root), restore-into-live-DB runbook, kubeconform 64 resources valid. NOT yet done: push/PR (GitHub token invalid in that session; user reconnecting), re-run `create-secrets.sh` before merge, live drills (fill the drill log).
 
 ## Roadmap
 
@@ -64,7 +65,7 @@ Done:
 4. Phase 4 — outbox → RabbitMQ, DLQ, LangGraph worker, presigned S3 uploads (done).
 5. Phase 5 (done) — kind locally (Codespaces): ingress, probes, limits, HPA (KEDA on queue length for the worker), `S3_PUBLIC_ENDPOINT` through the Ingress, images for api/worker/front.
 6. Phase 6 (done) — deploy to EC2: GHCR multi-arch images, `k8s/overlays/aws`, TLS, Argo CD, SSM secrets, Keycloak locked down.
-7. **Phase 7** ← next — Prometheus/Grafana, tracing by correlation-id, daily `pg_dump` to S3 + restore test, incident drills in `docs/`.
+7. **Phase 7** (code done, PR pending) — Prometheus/Grafana in-cluster, trace by correlation-id, weekday `pg_dump` to S3 + weekly restore test, runbooks and drills in `docs/incidents`.
 
 ## Working agreements
 
