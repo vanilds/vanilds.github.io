@@ -1,0 +1,66 @@
+spring:
+  application:
+    name: creditdesk-api
+  datasource:
+    # Same variable names as k8s/base/config.yaml (ConfigMap + Secret)
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:creditdesk}
+    username: ${DB_USER:creditdesk}
+    password: ${DB_PASSWORD:creditdesk}
+    hikari:
+      maximum-pool-size: 10
+  jpa:
+    open-in-view: false            # no lazy loading from controllers; queries stay in the service layer
+    hibernate:
+      ddl-auto: validate           # Flyway owns the schema; Hibernate only checks it matches
+    properties:
+      hibernate.jdbc.time_zone: UTC
+  flyway:
+    locations: classpath:db/migration
+  mvc:
+    problemdetails:
+      enabled: true                # RFC 9457 application/problem+json for framework errors too
+  jackson:
+    default-property-inclusion: non_null
+    serialization:
+      write-dates-as-timestamps: false
+
+creditdesk:
+  zone-id: America/Sao_Paulo       # business dates (filters, "today") are in São Paulo time
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health, info, prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true              # /actuator/health/liveness and /readiness for Kubernetes
+  info:
+    env:
+      enabled: true
+
+info:
+  app:
+    name: CreditDesk API
+    version: '@project.version@'
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+  default-produces-media-type: application/json
+  writer-with-order-by-keys: true   # stable key order, so diffs of api/openapi.yaml stay readable
+
+server:
+  shutdown: graceful               # finish in-flight requests when the pod is terminated
+
+---
+# Local development (docker compose / Codespaces): adds synthetic demo data
+spring:
+  config:
+    activate:
+      on-profile: dev
+  flyway:
+    locations: classpath:db/migration, classpath:db/seed

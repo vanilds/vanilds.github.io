@@ -1,0 +1,497 @@
+openapi: 3.1.0
+info:
+  description: Credit and debt-renegotiation proposals for bank analysts. All data
+    is synthetic.
+  title: CreditDesk API
+  version: 0.1.0
+servers:
+- description: Same origin
+  url: /
+tags:
+- description: Individuals (PF) and companies (PJ)
+  name: Customers
+- description: New credit and renegotiation proposals
+  name: Proposals
+paths:
+  /api/customers:
+    get:
+      description: "Paginated, ordered by name. CPFs are returned masked."
+      operationId: searchCustomers
+      parameters:
+      - description: "Exact CPF/CNPJ, with or without punctuation"
+        in: query
+        name: document
+        required: false
+        schema:
+          type: string
+      - description: "Part of the name, case-insensitive"
+        in: query
+        name: name
+        required: false
+        schema:
+          type: string
+      - in: query
+        name: page
+        required: false
+        schema:
+          type: integer
+          format: int32
+          default: 0
+      - description: "20, 50 or 100"
+        in: query
+        name: size
+        required: false
+        schema:
+          type: integer
+          format: int32
+          default: 20
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PageResponseCustomerResponse"
+          description: OK
+      summary: Search customers
+      tags:
+      - Customers
+    post:
+      description: Validates CPF/CNPJ check digits and rejects duplicates.
+      operationId: createCustomer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateCustomerRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomerResponse"
+          description: OK
+      summary: Register a customer
+      tags:
+      - Customers
+  /api/customers/{id}:
+    delete:
+      description: Soft delete. Blocked while the customer has open proposals.
+      operationId: deleteCustomer
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "204":
+          description: No Content
+      summary: Delete a customer
+      tags:
+      - Customers
+    get:
+      operationId: getCustomer
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomerResponse"
+          description: OK
+      summary: Get a customer
+      tags:
+      - Customers
+    put:
+      operationId: updateCustomer
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateCustomerRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomerResponse"
+          description: OK
+      summary: "Update name, e-mail and monthly revenue"
+      tags:
+      - Customers
+  /api/proposals:
+    get:
+      description: Newest first. The period is at most 90 days and defaults to the
+        last 30 days.
+      operationId: searchProposals
+      parameters:
+      - in: query
+        name: status
+        required: false
+        schema:
+          type: string
+          enum:
+          - DRAFT
+          - SUBMITTED
+          - IN_ANALYSIS
+          - APPROVED
+          - REJECTED
+          - CANCELLED
+      - description: "First day, inclusive (São Paulo date), e.g. 2026-11-01"
+        in: query
+        name: from
+        required: false
+        schema:
+          type: string
+          format: date
+      - description: "Last day, inclusive (São Paulo date). Defaults to today."
+        in: query
+        name: to
+        required: false
+        schema:
+          type: string
+          format: date
+      - in: query
+        name: customerId
+        required: false
+        schema:
+          type: string
+          format: uuid
+      - in: query
+        name: page
+        required: false
+        schema:
+          type: integer
+          format: int32
+          default: 0
+      - description: "20, 50 or 100"
+        in: query
+        name: size
+        required: false
+        schema:
+          type: integer
+          format: int32
+          default: 20
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PageResponseProposalResponse"
+          description: OK
+      summary: Search proposals
+      tags:
+      - Proposals
+    post:
+      description: Always created as DRAFT.
+      operationId: createProposal
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateProposalRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProposalResponse"
+          description: OK
+      summary: Create a proposal
+      tags:
+      - Proposals
+  /api/proposals/{id}:
+    get:
+      operationId: getProposal
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProposalResponse"
+          description: OK
+      summary: Get a proposal
+      tags:
+      - Proposals
+    put:
+      description: Only while it is DRAFT.
+      operationId: updateProposal
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateProposalRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProposalResponse"
+          description: OK
+      summary: Edit a proposal
+      tags:
+      - Proposals
+components:
+  schemas:
+    CreateCustomerRequest:
+      type: object
+      properties:
+        document:
+          type: string
+          description: "CPF (PF) or CNPJ (PJ), with or without punctuation. Alphanumeric\
+            \ CNPJ is accepted."
+          example: 529.982.247-25
+          maxLength: 20
+          minLength: 0
+        email:
+          type: string
+          format: email
+          example: maria.silva@example.com
+          maxLength: 254
+          minLength: 0
+        monthlyRevenue:
+          type: number
+          description: Monthly income (PF) or revenue (PJ) in BRL
+          example: 8500.0
+          maximum: 9999999999999.99
+          minimum: 0.00
+        name:
+          type: string
+          example: Maria da Silva
+          maxLength: 150
+          minLength: 3
+        type:
+          type: string
+          enum:
+          - PF
+          - PJ
+      required:
+      - document
+      - email
+      - monthlyRevenue
+      - name
+      - type
+    CreateProposalRequest:
+      type: object
+      properties:
+        amount:
+          type: number
+          description: "Principal in BRL, 100.00 to 1,000,000.00"
+          example: 15000.0
+        customerId:
+          type: string
+          format: uuid
+        installments:
+          type: integer
+          format: int32
+          description: "Monthly installments, 1 to 120"
+          example: 24
+        kind:
+          type: string
+          enum:
+          - NEW_CREDIT
+          - RENEGOTIATION
+        monthlyRate:
+          type: number
+          description: "Monthly rate as a fraction: 0.0199 = 1.99% a month (max 0.2)"
+          example: 0.0199
+      required:
+      - customerId
+      - kind
+    CustomerResponse:
+      type: object
+      properties:
+        createdAt:
+          type: string
+          format: date-time
+        document:
+          type: string
+          description: CPF masked (LGPD) or CNPJ formatted
+          example: '***.982.247-**'
+        email:
+          type: string
+        id:
+          type: string
+          format: uuid
+        monthlyRevenue:
+          type: number
+        name:
+          type: string
+        type:
+          type: string
+          enum:
+          - PF
+          - PJ
+        updatedAt:
+          type: string
+          format: date-time
+        version:
+          type: integer
+          format: int64
+    PageResponseCustomerResponse:
+      type: object
+      properties:
+        content:
+          type: array
+          items:
+            $ref: "#/components/schemas/CustomerResponse"
+        page:
+          type: integer
+          format: int32
+        size:
+          type: integer
+          format: int32
+        totalElements:
+          type: integer
+          format: int64
+        totalPages:
+          type: integer
+          format: int32
+    PageResponseProposalResponse:
+      type: object
+      properties:
+        content:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProposalResponse"
+        page:
+          type: integer
+          format: int32
+        size:
+          type: integer
+          format: int32
+        totalElements:
+          type: integer
+          format: int64
+        totalPages:
+          type: integer
+          format: int32
+    ProposalResponse:
+      type: object
+      properties:
+        amount:
+          type: number
+        analystId:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        customerId:
+          type: string
+          format: uuid
+        customerName:
+          type: string
+        id:
+          type: string
+          format: uuid
+        installmentAmount:
+          type: number
+          description: Fixed monthly installment (Tabela Price)
+          example: 792.17
+        installments:
+          type: integer
+          format: int32
+        kind:
+          type: string
+          enum:
+          - NEW_CREDIT
+          - RENEGOTIATION
+        monthlyRate:
+          type: number
+        status:
+          type: string
+          enum:
+          - DRAFT
+          - SUBMITTED
+          - IN_ANALYSIS
+          - APPROVED
+          - REJECTED
+          - CANCELLED
+        totalAmount:
+          type: number
+          description: installmentAmount × installments
+          example: 19012.08
+        updatedAt:
+          type: string
+          format: date-time
+        version:
+          type: integer
+          format: int64
+    UpdateCustomerRequest:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+          example: maria.souza@example.com
+          maxLength: 254
+          minLength: 0
+        monthlyRevenue:
+          type: number
+          example: 9200.0
+          maximum: 9999999999999.99
+          minimum: 0.00
+        name:
+          type: string
+          example: Maria da Silva Souza
+          maxLength: 150
+          minLength: 3
+      required:
+      - email
+      - monthlyRevenue
+      - name
+    UpdateProposalRequest:
+      type: object
+      properties:
+        amount:
+          type: number
+          description: "Principal in BRL, 100.00 to 1,000,000.00"
+          example: 18000.0
+        installments:
+          type: integer
+          format: int32
+          description: "Monthly installments, 1 to 120"
+          example: 36
+        kind:
+          type: string
+          enum:
+          - NEW_CREDIT
+          - RENEGOTIATION
+        monthlyRate:
+          type: number
+          description: "Monthly rate as a fraction: 0.0199 = 1.99% a month (max 0.2)"
+          example: 0.0189
+      required:
+      - kind

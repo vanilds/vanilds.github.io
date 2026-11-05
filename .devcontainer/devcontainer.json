@@ -1,0 +1,32 @@
+// One-click dev environment for GitHub Codespaces (Code → Codespaces → Create codespace on main).
+// Everything runs in the cloud: Java 21, Maven (via ./mvnw) and Docker for the database and Testcontainers.
+{
+  "name": "CreditDesk",
+  "image": "mcr.microsoft.com/devcontainers/java:1-21-bookworm",
+  "features": {
+    // Docker inside the codespace: `docker compose up` and Testcontainers both need it
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {}
+  },
+  // The 2-core machine (8 GB) is enough and uses the free monthly quota at half the rate of the 4-core one
+  "hostRequirements": {
+    "cpus": 2,
+    "memory": "8gb"
+  },
+  "forwardPorts": [8080, 5432],
+  "portsAttributes": {
+    "8080": { "label": "API", "onAutoForward": "notify" },
+    "5432": { "label": "PostgreSQL", "onAutoForward": "silent" }
+  },
+  // Download Maven and all dependencies once, when the codespace is created
+  "postCreateCommand": "cd api && ./mvnw -B -q dependency:go-offline",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "vscjava.vscode-java-pack",
+        "vmware.vscode-boot-dev-pack",
+        "humao.rest-client",
+        "ms-azuretools.vscode-docker"
+      ]
+    }
+  }
+}

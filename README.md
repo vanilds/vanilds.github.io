@@ -323,6 +323,8 @@ flowchart LR
 
 Errors follow RFC 9457 (`application/problem+json`). The contract lives in `api/openapi.yaml` and the front-ends generate their clients from it.
 
+Phase 1 implements customers and proposal create/read/update; how to run it and the design decisions are in [`api/README.md`](api/README.md).
+
 ---
 
 ## 7. Tech stack
@@ -362,6 +364,7 @@ vanilds.github.io/
 ├── infra/aws/            # EC2 bootstrap, IAM policies, budget, start/stop scripts
 ├── docs/diagrams/        # branded PNGs + their sources (render.mjs, specs.py)
 ├── .devcontainer/        # one-click Codespaces environment
+├── compose.yaml          # local stack: docker compose up --build
 └── .github/workflows/
 ```
 
@@ -369,7 +372,7 @@ vanilds.github.io/
 
 ## 9. Roadmap
 
-- [ ] **Phase 1 — CRUD backend**: customers and proposals in Spring Boot, Postgres + Flyway, CPF/CNPJ validation, pagination and filters, RFC 9457 errors, OpenAPI, Testcontainers, `docker compose up` in Codespaces.
+- [x] **Phase 1 — CRUD backend**: customers and proposals in Spring Boot, Postgres + Flyway, CPF/CNPJ validation, pagination and filters, RFC 9457 errors, OpenAPI, Testcontainers, `docker compose up` in Codespaces.
 - [ ] **Phase 2 — Security & workflow**: Keycloak realm with `ANALYST`/`MANAGER`/`AUDITOR`, JWT resource server, workflow transitions, optimistic locking, audit log, data masking.
 - [ ] **Phase 3 — Portfolio & micro frontends**: shell with portfolio + resume on GitHub Pages, `mfe-customers` + `mfe-proposals` with Native Federation, offline fallback, clients generated from OpenAPI.
 - [ ] **Phase 4 — Events, AI & S3**: transactional outbox → RabbitMQ, retry/DLQ, idempotent LangGraph worker, presigned S3 uploads.
