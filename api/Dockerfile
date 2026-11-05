@@ -23,7 +23,8 @@ RUN --mount=type=cache,target=/root/.m2 ./mvnw -B -q package -DskipTests \
 FROM public.ecr.aws/docker/library/eclipse-temurin:21-jre
 WORKDIR /app
 
-RUN groupadd --system app && useradd --system --gid app --no-create-home app
+# Numeric uid: Kubernetes' runAsNonRoot can only verify a number (a name like "app" could map to root)
+RUN groupadd --system --gid 10001 app && useradd --system --uid 10001 --gid app --no-create-home app
 
 # Layers ordered from least to most frequently changed, so a code change only pushes the last small layer
 COPY --from=build /layers/dependencies/ ./
@@ -31,7 +32,7 @@ COPY --from=build /layers/spring-boot-loader/ ./
 COPY --from=build /layers/snapshot-dependencies/ ./
 COPY --from=build /layers/application/ ./
 
-USER app
+USER 10001
 EXPOSE 8080
 
 # MaxRAMPercentage: size the heap from the container's memory limit (k8s limit 768Mi → ~576Mi heap)

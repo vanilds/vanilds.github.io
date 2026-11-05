@@ -1,0 +1,7 @@
+# Keep the build context small and the image reproducible: dependencies come from package-lock.json inside
+# the build, never from a local node_modules (which may hold binaries for another OS).
+node_modules
+dist
+.angular
+coverage
+*.log

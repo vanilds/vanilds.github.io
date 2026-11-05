@@ -1,17 +1,21 @@
+# RabbitMQ: events between the API and the AI worker (outbox → creditdesk.events → queues, retry, DLQ).
+# One node with a disk: queues are durable, so messages survive a restart of the pod.
 apiVersion: v1
 kind: Service
 metadata:
   name: rabbitmq
+  labels: { app: rabbitmq }
 spec:
   selector: { app: rabbitmq }
   ports:
     - { name: amqp, port: 5672 }
-    - { name: management, port: 15672 }
+    - { name: management, port: 15672 }   # UI and HTTP API; not in the Ingress (kubectl port-forward to look)
 ---
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
   name: rabbitmq
+  labels: { app: rabbitmq }
 spec:
   serviceName: rabbitmq
   replicas: 1
@@ -21,21 +25,39 @@ spec:
     metadata:
       labels: { app: rabbitmq }
     spec:
+      terminationGracePeriodSeconds: 60   # time to close connections and sync queues to disk
+      securityContext:
+        seccompProfile: { type: RuntimeDefault }
       containers:
         - name: rabbitmq
           image: public.ecr.aws/docker/library/rabbitmq:4.1-management-alpine
-          ports: [{ containerPort: 5672 }, { containerPort: 15672 }]
+          ports:
+            - { name: amqp, containerPort: 5672 }
+            - { name: management, containerPort: 15672 }
           env:
             - name: RABBITMQ_DEFAULT_USER
               valueFrom: { secretKeyRef: { name: creditdesk-secrets, key: RABBITMQ_USER } }
             - name: RABBITMQ_DEFAULT_PASS
               valueFrom: { secretKeyRef: { name: creditdesk-secrets, key: RABBITMQ_PASSWORD } }
+          # Probes as RabbitMQ's own docs recommend: "ping" for liveness (the node runs), "check_port_connectivity"
+          # for readiness (it accepts AMQP connections). Neither looks at queues or the cluster: a slow broker
+          # must not be killed, that would drop every client connection at once.
           readinessProbe:
-            exec: { command: ["rabbitmq-diagnostics", "-q", "ping"] }
+            exec: { command: ["rabbitmq-diagnostics", "-q", "check_port_connectivity"] }
+            initialDelaySeconds: 10
             periodSeconds: 15
+            timeoutSeconds: 10
+          livenessProbe:
+            exec: { command: ["rabbitmq-diagnostics", "-q", "ping"] }
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 15
+            failureThreshold: 4
           resources:
             requests: { cpu: 100m, memory: 256Mi }
             limits: { memory: 512Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
           volumeMounts:
             - { name: data, mountPath: /var/lib/rabbitmq }
   volumeClaimTemplates:

@@ -1,3 +1,5 @@
+# AI worker (Python + LangGraph): drafts the credit opinion for every proposal.submitted event.
+# Scaled by KEDA on the length of its RabbitMQ queue — including down to zero pods when there is nothing to do.
 apiVersion: v1
 kind: Service
 metadata:
@@ -5,14 +7,16 @@ metadata:
   labels: { app: ai-worker }
 spec:
   selector: { app: ai-worker }
-  ports: [{ name: http, port: 8000 }]  # health + /metrics only
+  ports: [{ name: http, port: 8000 }]  # /health and /metrics only; the work arrives through RabbitMQ
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: ai-worker
+  labels: { app: ai-worker }
 spec:
-  replicas: 1
+  # No "replicas": KEDA owns it (see the ScaledObject below)
+  revisionHistoryLimit: 3
   selector:
     matchLabels: { app: ai-worker }
   template:
@@ -23,17 +27,70 @@ spec:
         prometheus.io/path: /metrics
         prometheus.io/port: "8000"
     spec:
+      # On SIGTERM the worker stops consuming and finishes the message in hand; unacked messages go back to the
+      # queue by themselves if it dies anyway (ack only after the opinion is published).
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile: { type: RuntimeDefault }
       containers:
         - name: ai-worker
           image: creditdesk-ai-worker:dev
           imagePullPolicy: IfNotPresent
-          ports: [{ containerPort: 8000 }]
+          ports: [{ name: http, containerPort: 8000 }]
           envFrom:
             - configMapRef: { name: creditdesk-config }
             - secretRef: { name: creditdesk-secrets }
+          # Ready = connected to RabbitMQ and consuming (503 otherwise).
           readinessProbe:
-            httpGet: { path: /health, port: 8000 }
+            httpGet: { path: /health, port: http }
+            periodSeconds: 10
+          # Liveness only asks "is the process answering at all?". Using /health here would restart every worker
+          # during a RabbitMQ outage, while aio-pika's robust connection is already reconnecting by itself.
+          livenessProbe:
+            tcpSocket: { port: http }
+            initialDelaySeconds: 15
+            periodSeconds: 20
           resources:
             requests: { cpu: 100m, memory: 256Mi }
             limits: { memory: 512Mi }
-# Phase 5: scale on RabbitMQ queue length with KEDA instead of a fixed replica count.
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: tmp
+          emptyDir: { sizeLimit: 32Mi }
+---
+# Why KEDA and not a CPU HPA: the worker spends its time waiting (on the broker, on the language model), so CPU
+# says little about how much work is waiting. The queue length says exactly that.
+#   0 messages for 2 minutes → 0 pods (scale to zero: nothing reserved on the node while idle)
+#   1st message              → 1 pod (KEDA "activates" the Deployment; the message waits safely in the queue)
+#   more than 5 per pod      → up to 3 pods (KEDA feeds an HPA it creates and manages: keda-hpa-ai-worker)
+# Messages are never lost while the worker is at zero: the API declares the worker's queue too (Topology.java).
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: ai-worker
+  labels: { app: ai-worker }
+spec:
+  scaleTargetRef: { name: ai-worker }
+  minReplicaCount: 0
+  maxReplicaCount: 3
+  pollingInterval: 5          # seconds between queue checks (the latency of the first opinion after idle)
+  cooldownPeriod: 120         # seconds with an empty queue before going back to zero
+  triggers:
+    - type: rabbitmq
+      metadata:
+        protocol: amqp
+        # KEDA's operator runs in its own namespace, hence the full service name
+        host: amqp://rabbitmq.creditdesk.svc.cluster.local:5672/
+        # Credentials read from the worker's own environment (creditdesk-secrets): no copy of the password
+        usernameFromEnv: RABBITMQ_USER
+        passwordFromEnv: RABBITMQ_PASSWORD
+        queueName: ai-worker.proposal-submitted   # ai-worker/src/creditdesk_worker/topology.py
+        mode: QueueLength
+        value: "5"                # target messages per pod
+        activationValue: "0"      # any waiting message wakes the worker up from zero

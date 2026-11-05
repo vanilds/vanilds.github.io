@@ -15,8 +15,9 @@ import java.util.List;
 import java.util.UUID;
 
 /**
- * Synthetic demo data, profile {@code dev} only (docker compose / Codespaces). Every name is invented and every
- * CPF/CNPJ is a generated test number with valid check digits.
+ * Synthetic demo data, profiles {@code dev} (docker compose) and {@code demo} (the Kubernetes clusters, local and
+ * public). Every name is invented and every CPF/CNPJ is a generated test number with valid check digits.
+ * {@code demo} only adds this seed: unlike {@code dev} it brings no throwaway keys or local S3 defaults.
  *
  * <p>Java instead of SQL because the documents must be encrypted with the application key, like real data.
  * Repeatable ("R__"): Flyway runs it after the versioned migrations and again whenever {@link #getChecksum()}
@@ -28,7 +29,7 @@ import java.util.UUID;
  * analysts ana and bruno, decisions were taken by the manager marcos.
  */
 @Component
-@Profile("dev")
+@Profile({"dev", "demo"})
 public class R__Demo_data extends BaseJavaMigration {
 
     public static final String ANA = "a0000000-0000-4000-8000-000000000001";

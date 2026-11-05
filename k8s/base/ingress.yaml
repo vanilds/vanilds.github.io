@@ -1,27 +1,39 @@
+# One address for the whole demo, split by path. Same origin for the browser means: no CORS between the apps,
+# one cookie jar for Keycloak, and one place to put TLS (Phase 6).
+#
+#   /api            → API              /mfe/customers → micro frontend (customers)
+#   /auth           → Keycloak         /mfe/proposals → micro frontend (proposals)
+#   /               → shell (portfolio + demo host; any other path is an Angular route)
+#
+# Paths are forwarded unchanged (no rewrites): each service already lives under its prefix (the API's routes
+# start with /api, Keycloak runs with --http-relative-path=/auth, the micro frontends' files sit under /mfe/...).
+# Not routed on purpose: /actuator (probes and metrics stay inside the cluster) and RabbitMQ's UI.
+#
+# Controller: Traefik, through the standard Ingress API (no controller-specific annotations). Ingress NGINX was
+# retired by the Kubernetes project in March 2026; Traefik is what k3s ships, so kind and EC2 run the same one.
+# No host here: kind answers on whatever address reaches it (localhost:8088, the Codespaces URL). The aws
+# overlay adds the host and TLS.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: creditdesk
-  annotations:
-    nginx.ingress.kubernetes.io/proxy-body-size: "10m"   # document uploads
 spec:
-  ingressClassName: nginx
+  ingressClassName: traefik
   rules:
-    - host: creditdesk.local
-      http:
+    - http:
         paths:
           - path: /api
             pathType: Prefix
-            backend: { service: { name: api, port: { number: 8080 } } }
+            backend: { service: { name: api, port: { name: http } } }
           - path: /auth
             pathType: Prefix
-            backend: { service: { name: keycloak, port: { number: 8080 } } }
+            backend: { service: { name: keycloak, port: { name: http } } }
           - path: /mfe/customers
             pathType: Prefix
-            backend: { service: { name: mfe-customers, port: { number: 80 } } }
+            backend: { service: { name: mfe-customers, port: { name: http } } }
           - path: /mfe/proposals
             pathType: Prefix
-            backend: { service: { name: mfe-proposals, port: { number: 80 } } }
+            backend: { service: { name: mfe-proposals, port: { name: http } } }
           - path: /
             pathType: Prefix
-            backend: { service: { name: shell, port: { number: 80 } } }
+            backend: { service: { name: shell, port: { name: http } } }

@@ -1,30 +1,55 @@
+# Micro frontend: customers. Static ES modules under /mfe/customers/, loaded by the shell at runtime.
 apiVersion: v1
 kind: Service
 metadata:
   name: mfe-customers
+  labels: { app: mfe-customers }
 spec:
   selector: { app: mfe-customers }
-  ports: [{ port: 80 }]
+  ports: [{ name: http, port: 80, targetPort: http }]
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: mfe-customers
+  labels: { app: mfe-customers }
 spec:
-  replicas: 2
+  replicas: 1             # static files from nginx: one small pod serves far more than this demo will see
+  revisionHistoryLimit: 3
+  strategy:
+    rollingUpdate: { maxSurge: 1, maxUnavailable: 0 }
   selector:
     matchLabels: { app: mfe-customers }
   template:
     metadata:
       labels: { app: mfe-customers }
     spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile: { type: RuntimeDefault }
       containers:
         - name: mfe-customers
-          image: creditdesk-mfe-customers:dev
+          image: creditdesk-mfe-customers:dev     # web/Dockerfile, --target mfe-customers
           imagePullPolicy: IfNotPresent
-          ports: [{ containerPort: 80 }]
+          ports: [{ name: http, containerPort: 8080 }]
+          lifecycle:
+            preStop:
+              sleep: { seconds: 3 }       # let the Ingress drop this pod before nginx stops
           readinessProbe:
-            httpGet: { path: /, port: 80 }
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 30
           resources:
-            requests: { cpu: 25m, memory: 32Mi }
+            requests: { cpu: 10m, memory: 16Mi }
             limits: { memory: 64Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }   # nginx temp files and pid (nginx-unprivileged writes them here)
+      volumes:
+        - name: tmp
+          emptyDir: { sizeLimit: 16Mi }

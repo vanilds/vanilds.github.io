@@ -1,17 +1,47 @@
+# Local cluster (kind, in Codespaces or CI). Apply with k8s/local/up.sh, which first writes the two git-ignored
+# files this overlay reads:
+#   local.env      — PUBLIC_URL (http://localhost:8088, or the codespace's forwarded address) and the optional
+#                    language model settings (LLM_BASE_URL, LLM_MODEL)
+#   secrets.env    — random passwords and keys (same keys as k8s/base/secrets.example.env)
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
+namespace: creditdesk   # also for seaweedfs.yaml below (the base's namespace only covers the base's resources)
 resources:
   - ../../base
   - seaweedfs.yaml   # S3-compatible stand-in; the aws overlay uses real Amazon S3
+
+configMapGenerator:
+  - name: creditdesk-config
+    behavior: merge
+    envs:
+      - local.env
+    literals:
+      # Local S3. The bucket name doubles as the Ingress path for presigned URLs (see the patch below).
+      - S3_ENDPOINT=http://seaweedfs:8333
+      - S3_BUCKET=creditdesk-documents
+      - CREDITDESK_STORAGE_CREATEBUCKET=true   # the API creates the bucket at startup (on AWS it is infrastructure)
+
+secretGenerator:
+  - name: creditdesk-secrets
+    behavior: merge
+    envs:
+      - secrets.env
+
 patches:
-  # Keep the local cluster light: one replica each.
-  - target: { kind: Deployment, name: "api|shell|mfe-customers|mfe-proposals" }
+  # Presigned URLs must point at an address the BROWSER reaches: the same one as everything else.
+  - target: { kind: Deployment, name: api }
     patch: |-
-      - op: replace
-        path: /spec/replicas
-        value: 1
-  - target: { kind: HorizontalPodAutoscaler, name: api }
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value: { name: S3_PUBLIC_ENDPOINT, value: $(PUBLIC_URL) }
+  # ...and the Ingress sends /creditdesk-documents/... to SeaweedFS unchanged. Path-style S3 URLs look like
+  # $(PUBLIC_URL)/creditdesk-documents/proposals/<id>/<doc>?X-Amz-Signature=..., and the signature covers that
+  # exact path and Host header: a rewrite or a different host would make every upload fail with 403.
+  - target: { kind: Ingress, name: creditdesk }
     patch: |-
-      - op: replace
-        path: /spec/minReplicas
-        value: 1
+      - op: add
+        path: /spec/rules/0/http/paths/0
+        value:
+          path: /creditdesk-documents
+          pathType: Prefix
+          backend: { service: { name: seaweedfs, port: { name: s3 } } }

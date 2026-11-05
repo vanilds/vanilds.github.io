@@ -1,17 +1,61 @@
+# Everything CreditDesk runs, the same in every cluster. Overlays add what differs:
+#   overlays/local — kind (Codespaces, CI): local S3 (SeaweedFS), images built on the spot, generated secrets
+#   overlays/aws   — k3s on EC2 (Phase 6): real S3, GHCR images, TLS, secrets from SSM
+#
+# Cluster add-ons are installed separately, because they are shared by the whole cluster and have their own
+# release cycle: Traefik (Ingress controller), KEDA (event-driven autoscaling) and metrics-server (CPU for the
+# HPA). k3s ships Traefik and metrics-server; k8s/local/up.sh installs all three in kind.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: creditdesk
 
 resources:
   - namespace.yaml
-  - config.yaml
   - postgres.yaml
   - rabbitmq.yaml
-  - redis.yaml
+  - keycloak.yaml
+  - ../../infra/keycloak        # ConfigMap keycloak-realm, from the same JSON docker compose uses
   - api.yaml
   - ai-worker.yaml
   - shell.yaml
   - mfe-customers.yaml
   - mfe-proposals.yaml
-  - keycloak.yaml
   - ingress.yaml
+
+# Non-secret settings shared by the services (envFrom). A generator instead of a plain ConfigMap: its name gets
+# a hash of the content, so changing a value changes the name inside every Deployment that uses it, and
+# Kubernetes rolls those pods. A plain ConfigMap edit would be ignored until someone restarts them by hand.
+configMapGenerator:
+  - name: creditdesk-config
+    literals:
+      # The one address browsers use for everything (shell, micro frontends, API, Keycloak). Every other public
+      # URL is built from it: the token issuer, CORS, Keycloak's hostname. Each overlay sets its own.
+      - PUBLIC_URL=http://localhost:8088
+      - SPRING_PROFILES_ACTIVE=demo        # demo = synthetic seed data (api R__Demo_data); no dev shortcuts
+      - DB_HOST=postgres
+      - DB_NAME=creditdesk
+      - RABBITMQ_HOST=rabbitmq
+      # Internal address for Keycloak's public keys; the issuer (public) is built from PUBLIC_URL in api.yaml
+      - OIDC_JWK_SET_URI=http://keycloak:8080/auth/realms/creditdesk/protocol/openid-connect/certs
+      - S3_REGION=us-east-1
+      # Optional language model for the AI opinion (any OpenAI-compatible endpoint). Empty = rules template.
+      - LLM_BASE_URL=
+      - LLM_MODEL=
+
+# Secrets: the base declares an EMPTY creditdesk-secrets and each overlay fills it in (keys listed in
+# secrets.example.env): overlays/local generates random values, overlays/aws reads them from SSM Parameter Store.
+# Declared here, and not only in the overlays, so kustomize can rename every reference to it with the hash.
+secretGenerator:
+  - name: creditdesk-secrets
+
+# Kubernetes injects <SERVICE>_PORT=tcp://10.96.x.x:5672 (and _HOST, _PORT_5672_TCP...) for every Service of the
+# namespace into every pod: the legacy Docker-links format. Our own settings use the same names (RABBITMQ_PORT,
+# POSTGRES_..., KEYCLOAK_...), so the API read "tcp://10.96.130.99:5672" as a port number and crashed. Services
+# are found by DNS (rabbitmq, postgres...), so the injection is switched off for every pod.
+patches:
+  - target: { kind: "Deployment|StatefulSet" }
+    patch: |-
+      - op: add
+        path: /spec/template/spec/enableServiceLinks
+        value: false
+
