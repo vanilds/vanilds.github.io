@@ -121,20 +121,25 @@ POST {{base}}/api/proposals/{{newProposal.response.body.id}}/submit
 Authorization: Bearer {{bruno.response.body.access_token}}
 If-Match: "0"
 
-### Ana submits → SUBMITTED, ETag "1"
+### Ana submits → SUBMITTED, ETag "1". The response comes back at once: the AI opinion is asynchronous
 POST {{base}}/api/proposals/{{newProposal.response.body.id}}/submit
 Authorization: Bearer {{ana.response.body.access_token}}
 If-Match: "0"
 
-### Ana tries to start the analysis → 403 (analysts cannot decide proposals)
-POST {{base}}/api/proposals/{{newProposal.response.body.id}}/start-analysis
+### About a second later: the AI worker's opinion (RabbitMQ → LangGraph → RabbitMQ → API)
+GET {{base}}/api/proposals/{{newProposal.response.body.id}}/opinions
 Authorization: Bearer {{ana.response.body.access_token}}
-If-Match: "1"
 
-### Marcos (manager) picks it up → IN_ANALYSIS, ETag "2"
-POST {{base}}/api/proposals/{{newProposal.response.body.id}}/start-analysis
-Authorization: Bearer {{marcos.response.body.access_token}}
-If-Match: "1"
+### …and the worker moved it to IN_ANALYSIS, ETag "2" (the history shows actor "ai-worker")
+### With the worker stopped (docker compose stop ai-worker) it stays SUBMITTED and a manager uses
+### POST …/start-analysis instead: the business never depends on the AI. The event waits in the queue.
+GET {{base}}/api/proposals/{{newProposal.response.body.id}}
+Authorization: Bearer {{ana.response.body.access_token}}
+
+### Ana tries to approve → 403 (analysts cannot decide proposals)
+POST {{base}}/api/proposals/{{newProposal.response.body.id}}/approve
+Authorization: Bearer {{ana.response.body.access_token}}
+If-Match: "2"
 
 ### Approve with a stale version → 412 (it is "2" now)
 POST {{base}}/api/proposals/{{newProposal.response.body.id}}/approve
@@ -156,6 +161,41 @@ If-Match: "3"
 Content-Type: application/json
 
 { "kind": "NEW_CREDIT", "amount": 12000.00, "installments": 24, "monthlyRate": 0.0199 }
+
+### ── Documents (S3 presigned URLs; SeaweedFS plays S3 locally) ──────────────────────────────────
+
+### 1. Ana asks to attach a proof of income (owner, DRAFT). sizeBytes is the exact size of samples/payslip-sample.pdf
+# @name newDocument
+POST {{base}}/api/proposals/{{newProposal.response.body.id}}/documents
+Authorization: Bearer {{ana.response.body.access_token}}
+Content-Type: application/json
+
+{ "category": "INCOME_PROOF", "fileName": "payslip-sample.pdf", "contentType": "application/pdf", "sizeBytes": 78 }
+
+### 2. Send the file straight to storage with the presigned URL (no Authorization header: the URL is the permission)
+PUT {{newDocument.response.body.upload.url}}
+Content-Type: application/pdf
+
+< ./samples/payslip-sample.pdf
+
+### 3. The API checks the object (exists, same size and type) → AVAILABLE. Before step 2 this is 409.
+POST {{base}}/api/proposals/{{newProposal.response.body.id}}/documents/{{newDocument.response.body.document.id}}/confirm
+Authorization: Bearer {{ana.response.body.access_token}}
+
+### List (confirmed documents only)
+GET {{base}}/api/proposals/{{newProposal.response.body.id}}/documents
+Authorization: Bearer {{aline.response.body.access_token}}
+
+### Download link for the auditor: valid about a minute, and the download is audited
+POST {{base}}/api/proposals/{{newProposal.response.body.id}}/documents/{{newDocument.response.body.document.id}}/download
+Authorization: Bearer {{aline.response.body.access_token}}
+
+### An HTML file is refused → 400 unsupported-file-type
+POST {{base}}/api/proposals/{{newProposal.response.body.id}}/documents
+Authorization: Bearer {{ana.response.body.access_token}}
+Content-Type: application/json
+
+{ "category": "OTHER", "fileName": "page.html", "contentType": "text/html", "sizeBytes": 100 }
 
 ### Timeline: who moved it, when and why
 GET {{base}}/api/proposals/{{newProposal.response.body.id}}/history

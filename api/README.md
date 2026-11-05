@@ -1,25 +1,26 @@
 # CreditDesk API
 
 Spring Boot 3 service for customers (PF/PJ) and credit proposals, with their approval workflow.
-Phases 1 and 2 of the [roadmap](../README.md#9-roadmap): the CRUD core, then security, workflow, audit and
-encryption.
+Phases 1, 2 and 4 of the [roadmap](../README.md#9-roadmap): the CRUD core; security, workflow, audit and
+encryption; then events to the AI worker and documents in S3.
 
 ## Run it
 
 Everything runs in **GitHub Codespaces** (`Code → Codespaces → Create codespace`); nothing to install locally.
 
 ```bash
-# Whole stack (PostgreSQL + Keycloak + API with synthetic demo data), from the repository root
+# Whole stack (PostgreSQL, Keycloak, RabbitMQ, local S3, AI worker, API with synthetic demo data)
 docker compose up --build
 
-# Or: database and Keycloak in Docker, API from Maven (faster edit → run loop)
-docker compose up -d postgres keycloak
+# Or: infrastructure in Docker, API from Maven (faster edit → run loop)
+docker compose up -d postgres keycloak rabbitmq seaweedfs ai-worker
 cd api && ./mvnw spring-boot:run -Dspring-boot.run.profiles=dev
 ```
 
 - API: http://localhost:8080 — Swagger UI at `/swagger-ui.html` (click **Authorize** and paste a token)
 - Keycloak: http://localhost:8180 — demo users `ana`, `bruno` (analysts), `marcos` (manager), `aline` (auditor);
   passwords and how to get a token in [`infra/keycloak/README.md`](../infra/keycloak/README.md)
+- RabbitMQ: http://localhost:15672 (`creditdesk` / `creditdesk`) — queues, retry and dead-letter queues
 - Clickable requests, logins included: [`requests.http`](requests.http) (VS Code "REST Client" extension)
 - Contract: [`openapi.yaml`](openapi.yaml), generated from the code by the tests
 
@@ -28,7 +29,7 @@ cd api && ./mvnw spring-boot:run -Dspring-boot.run.profiles=dev
 ```bash
 cd api
 ./mvnw test     # unit tests only (seconds, no Docker)
-./mvnw verify   # + integration tests against a real PostgreSQL 16 (Testcontainers, needs Docker)
+./mvnw verify   # + integration tests against real PostgreSQL 16, RabbitMQ 4.1 and SeaweedFS (Testcontainers, needs Docker)
 ```
 
 `verify` also rewrites `openapi.yaml`. CI fails if the committed file is different, so commit it with any API change.
@@ -40,7 +41,11 @@ Integration tests build JWTs with `spring-security-test`, so they never need a r
 io.github.vanilds.creditdesk
 ├── customer/   Customer entity, CPF/CNPJ rules, search, soft delete, encrypted document, audited reveal
 │   └── migration/   Java Flyway migrations that need the app's keys (encrypt old rows, dev seed)
-├── proposal/   Proposal entity, Tabela Price, period filters, workflow (ProposalAction), status timeline
+├── proposal/   Proposal entity, Tabela Price, period filters, workflow (ProposalAction), status timeline,
+│   │           proposal.submitted event
+│   ├── opinion/     AI opinions: listener (opinion.drafted), idempotent recording, GET …/opinions
+│   └── document/    Uploads and downloads through S3 presigned URLs
+├── messaging/  RabbitMQ topology, transactional outbox + relay, inbox, retry / dead-letter handling
 ├── audit/      Append-only audit trail: who, what, when, from which request, why
 └── shared/
     ├── crypto/      FieldCipher — AES-256-GCM + HMAC-SHA256
@@ -92,7 +97,29 @@ the proposal module implements.
 | Plaintext column removed by a **Java Flyway migration** (V4 add → V5 encrypt → V6 drop) | SQL cannot encrypt without the key; one ordered migration run means no instance ever sees half-converted data |
 | No default encryption keys outside `dev`/`test`; the app refuses to start without them | Fail fast instead of silently encrypting with a known key |
 | CORS: explicit origin list, no cookies, `ETag` exposed | The Angular apps run on other origins (Pages, `localhost:4200-4202`); without `Access-Control-Expose-Headers: ETag` the browser hides the version and every edit would end in 428 |
-| `X-Correlation-Id` in every log line, response and audit record | One id finds a request across logs, audit and (Phase 4) the worker; validated to prevent log injection |
+| `X-Correlation-Id` in every log line, response and audit record | One id finds a request across logs, audit and the worker (it travels in a message header); validated to prevent log injection |
+
+### Phase 4 — Events, AI opinion, documents
+
+| Decision | Why |
+|---|---|
+| **Transactional outbox**: the event is a row written in the same transaction as the submit | "Commit then publish" loses events on a crash, "publish then commit" announces things that never happened; there is no transaction across Postgres and RabbitMQ (and XA is not worth it) |
+| Relay with `FOR UPDATE SKIP LOCKED`, oldest first, stops at the first failure | Several API replicas share the work without publishing the same row twice; order kept; a broker outage only grows the backlog (`creditdesk_outbox_pending`) |
+| **Publisher confirms + `mandatory`**, persistent messages | A row is marked published only when the broker stored *and routed* it; survives a broker restart |
+| **At-least-once + idempotent consumers** (inbox table keyed by message id) | Exactly-once delivery does not exist across a network; exactly-once *effect* does, with deduplication in the same transaction as the work |
+| Retry through a TTL queue back to the **same** queue; DLQ after N attempts; poison messages straight to DLQ | No tight requeue loop, no re-broadcast to other consumers, and a human sees what failed and why (`x-dead-letter-reason`) |
+| `RabbitAdmin` ignores declaration errors | The retry delay is a queue argument; changing the setting must not stop the API on an existing broker (it logs and keeps the old queue) |
+| The API declares the worker's main queue too | A topic exchange drops messages no queue is bound to: the first submissions would vanish if the worker had never started |
+| Event payload without name, CPF/CNPJ or e-mail | Data minimization (LGPD): the worker and any LLM provider never receive personal data |
+| `proposalVersion` in the event; the opinion moves the proposal only if it is still SUBMITTED at that version | A slow opinion never undoes a manager's manual start or a return-and-resubmit |
+| The worker is an `Actor.system("ai-worker")` in history and audit | Processes are accountable like people; the `system:` prefix can never collide with a Keycloak id |
+| Opinions are insert-only (`Persistable.isNew`) | A duplicate id fails loudly instead of being silently merged |
+| **Presigned URLs**: the API signs, the browser talks to S3 | Files never load the API (memory, threads, timeouts); credentials never reach the browser |
+| `Content-Type` and `Content-Length` are part of the upload signature; `confirm` re-checks with `HEAD` | S3 itself refuses another type or size; the API trusts nothing the browser says it uploaded |
+| Storage key from ids only (`proposals/{id}/{documentId}`) | File names carry personal data and path tricks; keys end up in logs and access reports |
+| Download link via `POST …/download`, audited, ~1 minute | Opening a document with someone's income is a read worth recording (LGPD accountability) |
+| PDF/JPEG/PNG only, 10 MB, 10 per proposal | No HTML/SVG/Office files (scripts, macros); bounded storage per proposal |
+| No S3 keys on AWS: default credentials chain → EC2 instance profile | Static keys leak; role credentials rotate by themselves (Phase 6) |
 
 ## Configuration
 
@@ -105,8 +132,12 @@ Same variable names as the Kubernetes ConfigMap/Secret in [`k8s/base/config.yaml
 | `OIDC_JWK_SET_URI` | Where to fetch Keycloak's public keys (internal address) |
 | `CORS_ALLOWED_ORIGINS` | Browser origins allowed to call the API (comma-separated). Default: `localhost:4200-4202` + `https://vanilds.github.io` |
 | `DOCUMENT_ENCRYPTION_KEY`, `DOCUMENT_HASH_KEY` | 32 random bytes each, base64 (`openssl rand -base64 32`), different from each other |
+| `RABBITMQ_HOST`, `RABBITMQ_PORT` (5672), `RABBITMQ_USER`, `RABBITMQ_PASSWORD` | RabbitMQ |
+| `S3_BUCKET`, `S3_REGION` (us-east-1) | Documents bucket. On AWS that is all: credentials come from the instance profile |
+| `S3_ENDPOINT`, `S3_PUBLIC_ENDPOINT`, `S3_ACCESS_KEY`, `S3_SECRET_KEY` | Only for an S3-compatible store (SeaweedFS locally). The public endpoint is the address the *browser* uses, written into presigned URLs |
 
-Profile `dev` adds synthetic demo data (`customer/migration/R__Demo_data.java`) and throwaway keys.
+Profile `dev` adds synthetic demo data (`customer/migration/R__Demo_data.java`), throwaway keys and the local S3
+settings (creating the bucket if missing).
 
 ## Image
 

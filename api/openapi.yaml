@@ -16,12 +16,16 @@ servers:
 security:
 - keycloak: []
 tags:
+- description: "Files attached to a proposal, stored in S3 through presigned URLs"
+  name: Documents
 - description: New credit and renegotiation proposals and their approval workflow
   name: Proposals
 - description: Individuals (PF) and companies (PJ)
   name: Customers
 - description: Append-only audit trail (MANAGER and AUDITOR)
   name: Audit
+- description: Credit opinions drafted by the AI worker after each submission
+  name: AI opinions
 paths:
   /api/audit:
     get:
@@ -65,6 +69,9 @@ paths:
           - PROPOSAL_APPROVED
           - PROPOSAL_REJECTED
           - PROPOSAL_RETURNED
+          - PROPOSAL_OPINION_RECORDED
+          - PROPOSAL_DOCUMENT_ADDED
+          - PROPOSAL_DOCUMENT_DOWNLOADED
           - SYSTEM_MIGRATION
       - in: query
         name: from
@@ -485,6 +492,114 @@ paths:
       summary: Cancel a draft
       tags:
       - Proposals
+  /api/proposals/{id}/documents:
+    get:
+      description: "Only confirmed (AVAILABLE) documents, oldest first."
+      operationId: listProposalDocuments
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/DocumentResponse"
+          description: OK
+      summary: Documents of a proposal
+      tags:
+      - Documents
+    post:
+      description: "Owner only, while DRAFT. PDF, JPEG or PNG up to 10 MB, at most\
+        \ 10 per proposal. Returns a presigned PUT URL valid for 5 minutes: send the\
+        \ file there, then call confirm."
+      operationId: addProposalDocument
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddDocumentRequest"
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UploadResponse"
+          description: Created
+      summary: Start an upload
+      tags:
+      - Documents
+  /api/proposals/{id}/documents/{documentId}/confirm:
+    post:
+      description: "The API checks the object in S3 (exists, same size and type) and\
+        \ makes it AVAILABLE. 409 if the file was not sent yet; 422 if it differs\
+        \ from what was declared."
+      operationId: confirmProposalDocument
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - in: path
+        name: documentId
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocumentResponse"
+          description: OK
+      summary: Finish an upload
+      tags:
+      - Documents
+  /api/proposals/{id}/documents/{documentId}/download:
+    post:
+      description: "A presigned GET URL valid for about a minute. POST, not GET: every\
+        \ download is audited, so asking for a link is an action, not a harmless read."
+      operationId: downloadProposalDocument
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - in: path
+        name: documentId
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DownloadResponse"
+          description: OK
+      summary: Get a download link
+      tags:
+      - Documents
   /api/proposals/{id}/history:
     get:
       description: "Every status change, oldest first, with who did it and the reason."
@@ -508,6 +623,31 @@ paths:
       summary: Status timeline
       tags:
       - Proposals
+  /api/proposals/{id}/opinions:
+    get:
+      description: "Newest first; empty while the worker is still drafting. The screen\
+        \ polls this after a submit. Advisory only: approving or rejecting is always\
+        \ a manager's decision."
+      operationId: listProposalOpinions
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/OpinionResponse"
+          description: OK
+      summary: AI opinions of a proposal
+      tags:
+      - AI opinions
   /api/proposals/{id}/reject:
     post:
       description: "Manager, not the author. Reason required. IN_ANALYSIS → REJECTED."
@@ -637,6 +777,38 @@ paths:
       - Proposals
 components:
   schemas:
+    AddDocumentRequest:
+      type: object
+      properties:
+        category:
+          type: string
+          enum:
+          - INCOME_PROOF
+          - FINANCIAL_STATEMENT
+          - BANK_STATEMENT
+          - IDENTITY
+          - ADDRESS_PROOF
+          - DEBT_STATEMENT
+          - OTHER
+        contentType:
+          type: string
+          description: "application/pdf, image/jpeg or image/png"
+          example: application/pdf
+          minLength: 1
+        fileName:
+          type: string
+          example: payslip-october.pdf
+          maxLength: 200
+          minLength: 0
+        sizeBytes:
+          type: integer
+          format: int64
+          description: "Exact size in bytes, at most 10 MB. S3 refuses any other size."
+          example: 184320
+      required:
+      - category
+      - contentType
+      - fileName
     AuditEntryResponse:
       type: object
       properties:
@@ -655,6 +827,9 @@ components:
           - PROPOSAL_APPROVED
           - PROPOSAL_REJECTED
           - PROPOSAL_RETURNED
+          - PROPOSAL_OPINION_RECORDED
+          - PROPOSAL_DOCUMENT_ADDED
+          - PROPOSAL_DOCUMENT_DOWNLOADED
           - SYSTEM_MIGRATION
         actorId:
           type: string
@@ -779,6 +954,103 @@ components:
         version:
           type: integer
           format: int64
+    DocumentResponse:
+      type: object
+      properties:
+        category:
+          type: string
+          enum:
+          - INCOME_PROOF
+          - FINANCIAL_STATEMENT
+          - BANK_STATEMENT
+          - IDENTITY
+          - ADDRESS_PROOF
+          - DEBT_STATEMENT
+          - OTHER
+        confirmedAt:
+          type: string
+          format: date-time
+        contentType:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        fileName:
+          type: string
+        id:
+          type: string
+          format: uuid
+        sizeBytes:
+          type: integer
+          format: int64
+        status:
+          type: string
+          enum:
+          - PENDING_UPLOAD
+          - AVAILABLE
+        uploadedByName:
+          type: string
+    DownloadResponse:
+      type: object
+      description: Open the URL to download; it expires in about a minute and works
+        for this one file only.
+      properties:
+        expiresAt:
+          type: string
+          format: date-time
+        url:
+          type: string
+    OpinionResponse:
+      type: object
+      description: "AI credit opinion. Advisory: it supports the manager's decision,\
+        \ it never makes it."
+      properties:
+        current:
+          type: boolean
+          description: true for the opinion on the latest submission; false once the
+            proposal was returned or submitted again after it
+        generatedAt:
+          type: string
+          format: date-time
+        id:
+          type: string
+          format: uuid
+        indicators:
+          type: object
+          additionalProperties: {}
+          description: "Figures the rules used, e.g. installmentToIncome = 0.31"
+        model:
+          type: string
+          description: "Model that wrote the summary, or rules-template when no LLM\
+            \ is configured"
+          example: rules-template-v1
+        proposalVersion:
+          type: integer
+          format: int64
+          description: The submitted version it was drafted for
+        receivedAt:
+          type: string
+          format: date-time
+        recommendation:
+          type: string
+          enum:
+          - FAVORABLE
+          - CAUTION
+          - UNFAVORABLE
+        riskFlags:
+          type: array
+          items:
+            $ref: "#/components/schemas/RiskFlag"
+        riskLevel:
+          type: string
+          enum:
+          - LOW
+          - MEDIUM
+          - HIGH
+        suggestedPlan:
+          $ref: "#/components/schemas/SuggestedPlan"
+        summary:
+          $ref: "#/components/schemas/Summary"
     PageResponseAuditEntryResponse:
       type: object
       properties:
@@ -917,6 +1189,43 @@ components:
           enum:
           - PF
           - PJ
+    RiskFlag:
+      type: object
+      properties:
+        code:
+          type: string
+          example: HIGH_INSTALLMENT_TO_INCOME
+          maxLength: 60
+          minLength: 0
+        message:
+          type: string
+          description: English explanation; the front translates by code
+          maxLength: 500
+          minLength: 0
+        severity:
+          type: string
+          enum:
+          - LOW
+          - MEDIUM
+          - HIGH
+      required:
+      - code
+      - message
+      - severity
+    SignedRequest:
+      type: object
+      properties:
+        expiresAt:
+          type: string
+          format: date-time
+        headers:
+          type: object
+          additionalProperties:
+            type: string
+        method:
+          type: string
+        url:
+          type: string
     StatusChangeResponse:
       type: object
       properties:
@@ -949,6 +1258,34 @@ components:
           - APPROVED
           - REJECTED
           - CANCELLED
+    SuggestedPlan:
+      type: object
+      properties:
+        installmentAmount:
+          type: number
+          minimum: 0.01
+        installmentToIncome:
+          type: number
+        installments:
+          type: integer
+          format: int32
+      required:
+      - installmentAmount
+      - installmentToIncome
+    Summary:
+      type: object
+      properties:
+        en:
+          type: string
+          maxLength: 4000
+          minLength: 0
+        pt:
+          type: string
+          maxLength: 4000
+          minLength: 0
+      required:
+      - en
+      - pt
     TransitionRequest:
       type: object
       properties:
@@ -1004,6 +1341,15 @@ components:
           example: 0.0189
       required:
       - kind
+    UploadResponse:
+      type: object
+      description: "Send the file with exactly this method, URL and headers, then\
+        \ call confirm."
+      properties:
+        document:
+          $ref: "#/components/schemas/DocumentResponse"
+        upload:
+          $ref: "#/components/schemas/SignedRequest"
   securitySchemes:
     keycloak:
       bearerFormat: JWT

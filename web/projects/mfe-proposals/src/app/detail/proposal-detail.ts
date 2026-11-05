@@ -29,6 +29,8 @@ import {
   toProblem,
 } from '@creditdesk/shared';
 import { ProposalForm } from '../form/proposal-form';
+import { AiOpinion } from './ai-opinion';
+import { ProposalDocuments } from './proposal-documents';
 
 const ACTION_LABEL: Record<ProposalAction, Text> = {
   submit: { en: 'Submit for analysis', pt: 'Enviar para análise' },
@@ -41,7 +43,15 @@ const ACTION_LABEL: Record<ProposalAction, Text> = {
 
 @Component({
   selector: 'cd-proposal-detail',
-  imports: [RouterLink, FormsModule, ProblemBanner, StatusBadge, ProposalForm],
+  imports: [
+    RouterLink,
+    FormsModule,
+    ProblemBanner,
+    StatusBadge,
+    ProposalForm,
+    AiOpinion,
+    ProposalDocuments,
+  ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <header class="page-head">
@@ -184,6 +194,10 @@ const ACTION_LABEL: Record<ProposalAction, Text> = {
           </form>
         }
       }
+
+      <!-- When the opinion arrives, the API has already moved the proposal: reload to show IN_ANALYSIS -->
+      <cd-ai-opinion [proposal]="r.value" (arrived)="load()" />
+      <cd-proposal-documents [proposal]="r.value" />
 
       <section class="history">
         <h2 class="kicker">{{ i18n.t({ en: 'Status history', pt: 'Histórico de status' }) }}</h2>

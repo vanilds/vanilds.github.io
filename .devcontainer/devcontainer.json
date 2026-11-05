@@ -15,14 +15,17 @@
     "cpus": 2,
     "memory": "8gb"
   },
-  "forwardPorts": [4200, 4201, 4202, 8080, 8180, 5432],
+  "forwardPorts": [4200, 4201, 4202, 8080, 8180, 5432, 15672, 8333, 8000],
   "portsAttributes": {
     "4200": { "label": "Shell (portfolio + demo)", "onAutoForward": "openBrowser" },
     "4201": { "label": "mfe-customers", "onAutoForward": "silent" },
     "4202": { "label": "mfe-proposals", "onAutoForward": "silent" },
     "8080": { "label": "API", "onAutoForward": "notify" },
     "8180": { "label": "Keycloak", "onAutoForward": "silent" },
-    "5432": { "label": "PostgreSQL", "onAutoForward": "silent" }
+    "5432": { "label": "PostgreSQL", "onAutoForward": "silent" },
+    "15672": { "label": "RabbitMQ management", "onAutoForward": "silent" },
+    "8333": { "label": "Local S3 (presigned uploads)", "onAutoForward": "silent" },
+    "8000": { "label": "AI worker health/metrics", "onAutoForward": "silent" }
   },
   // Download Maven and npm dependencies once, when the codespace is created
   "postCreateCommand": "(cd api && ./mvnw -B -q dependency:go-offline) && (cd web && npm ci)",

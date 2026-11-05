@@ -128,7 +128,7 @@ flowchart LR
         kc["Keycloak<br/>OIDC · roles"]
         api["api<br/>Spring Boot 3 / Java 21"]
         worker["ai-worker<br/>Python + LangGraph"]
-        mq[("RabbitMQ<br/>exchange: proposals")]
+        mq[("RabbitMQ<br/>exchange: creditdesk.events<br/>retry + dead-letter queues")]
         db[("PostgreSQL")]
         cache[("Redis<br/>rate limit · cache")]
     end
@@ -149,10 +149,11 @@ flowchart LR
     api --> db
     api --> cache
     api -- "presigned URLs" --> s3
-    api -- "proposal.submitted<br/>audit.events" --> mq
-    mq --> worker
-    worker --> llm
-    worker -- "POST /internal/proposals/{id}/opinion" --> api
+    api -- "proposal.submitted<br/>(transactional outbox)" --> mq
+    mq -- "proposal.submitted" --> worker
+    worker -- "summary text only,<br/>no personal data" --> llm
+    worker -- "opinion.drafted" --> mq
+    mq -- "opinion.drafted" --> api
 ```
 
 </details>
@@ -192,15 +193,22 @@ erDiagram
     DOCUMENT {
         uuid id PK
         uuid proposal_id FK
-        string type "contrato social, comprovante..."
-        string s3_key
+        enum category "INCOME_PROOF, BANK_STATEMENT, ..."
+        string file_name
+        string storage_key "proposals/{proposalId}/{id}: ids only"
+        enum status "PENDING_UPLOAD | AVAILABLE"
     }
     AI_OPINION {
-        uuid proposal_id PK
-        int risk_score
-        text summary
-        json flags
+        uuid id PK "= opinion.drafted message id"
+        uuid proposal_id FK
+        int proposal_version "the submission it refers to"
+        enum recommendation "FAVORABLE | CAUTION | UNFAVORABLE"
+        enum risk_level
+        text summary_en
+        text summary_pt
+        json risk_flags
         json suggested_plan
+        string model "LLM name or rules-template-v1"
     }
     STATUS_HISTORY {
         uuid id PK
@@ -262,18 +270,33 @@ sequenceDiagram
     participant Q as RabbitMQ
     participant W as ai-worker
 
-    A->>F: Click "Submit proposal"
+    A->>F: Click "Submit for analysis"
     F->>API: POST /api/proposals/{id}/submit<br/>(JWT, X-Correlation-Id, If-Match: version)
-    API->>DB: UPDATE status=SUBMITTED + status_history + outbox row (one transaction)
-    API-->>F: 202 Accepted
-    API->>Q: outbox relay publishes proposal.submitted
-    Q->>W: deliver (idempotent by proposal id)
-    W->>API: GET /internal/proposals/{id} (masked data only)
-    W->>W: LangGraph: summarize → risk flags → installment plan
-    W->>API: POST /internal/proposals/{id}/opinion
-    API->>DB: save AI_OPINION, status=IN_ANALYSIS
-    F->>API: poll / SSE → opinion shown to analyst
+    API->>DB: status=SUBMITTED + status_history + audit_log + outbox_event (ONE transaction)
+    API-->>F: 200 OK (does not wait for the AI)
+    loop every 500 ms
+        API->>DB: SELECT pending outbox rows FOR UPDATE SKIP LOCKED
+        API->>Q: publish proposal.submitted (persistent, publisher confirm)
+        API->>DB: mark published
+    end
+    Q->>W: deliver (masked data: amounts, ratios, counts — no name or CPF)
+    W->>W: LangGraph: rules decide risk + recommendation → model writes text → guardrails
+    W->>Q: publish opinion.drafted (id derived from the submission), then ack
+    Q->>API: deliver opinion.drafted
+    API->>DB: inbox check + AI_OPINION + status=IN_ANALYSIS + history + audit (ONE transaction)
+    F->>API: GET /api/proposals/{id}/opinions (polls every 3 s while SUBMITTED)
 ```
+
+**What happens when something fails** (integration tests cover retries, dead letters, duplicates and late opinions; the broker outage was drilled by stopping RabbitMQ in `docker compose`):
+
+| Failure | What the system does |
+|---|---|
+| RabbitMQ is down when the analyst submits | The submit still succeeds: the event waits in `outbox_event` and goes out when the broker is back (`creditdesk_outbox_pending` shows the backlog). |
+| The API crashes after publishing, before marking the row | The event is published again. Consumers deduplicate on the message id (inbox table), so nothing happens twice. |
+| The worker crashes mid-opinion | The message was not acknowledged, so RabbitMQ delivers it again. The opinion id is derived from the submission, so a second copy is recognized. |
+| A message keeps failing | Rejected into `<queue>.retry`, back after a delay, up to N attempts, then parked in `<queue>.dlq` with the reason. Unreadable messages skip the retries. |
+| The LLM is down, slow or answers something wrong | The worker falls back to its rules template. The business never depends on the model. |
+| The worker is down for a long time | A manager can still use **start analysis**; a late opinion is stored, marked against its version, and never moves the proposal back. |
 
 ### Uploading a document (presigned URL)
 
@@ -285,14 +308,15 @@ sequenceDiagram
     participant API as api
     participant S3 as Amazon S3
 
-    A->>F: Choose file (PDF, max 5 MB)
-    F->>API: POST /api/proposals/{id}/documents/upload-url
-    API->>API: check role, status, file type and size
-    API-->>F: presigned PUT URL (valid 5 min) + document id
+    A->>F: Choose file (PDF, JPEG or PNG, max 10 MB)
+    F->>API: POST /api/proposals/{id}/documents {category, fileName, contentType, sizeBytes}
+    API->>API: owner? DRAFT? type, size, max 10 per proposal
+    API-->>F: 201 + presigned PUT URL (5 min; Content-Type and Content-Length are signed)
     F->>S3: PUT file directly (never passes through the API)
     F->>API: POST /api/proposals/{id}/documents/{docId}/confirm
-    API->>S3: HEAD object (verify size and type)
-    API-->>F: 201 Created
+    API->>S3: HEAD object (exists? same size and type?)
+    API-->>F: 200 AVAILABLE (audited)
+    Note over F,S3: Download: POST …/download → audited, presigned GET valid ~1 min
 ```
 
 ### Delivery pipeline
@@ -322,7 +346,9 @@ flowchart LR
 | `PUT` | `/api/proposals/{id}` | Owner only, only in `DRAFT`; `If-Match` |
 | `POST` | `/api/proposals/{id}/submit` · `/cancel` · `/start-analysis` · `/approve` · `/reject` · `/return` | Workflow commands: role, owner and four-eyes checks; `If-Match` |
 | `GET` | `/api/proposals/{id}/history` | Status timeline with who and why |
-| `POST` | `/api/proposals/{id}/documents/upload-url` · `/{docId}/confirm` | Presigned S3 upload (Phase 4) |
+| `GET` | `/api/proposals/{id}/opinions` | AI opinions, newest first; `current` marks the one for the latest submission |
+| `GET` / `POST` | `/api/proposals/{id}/documents` | List / start an upload (owner, `DRAFT`): returns a presigned S3 `PUT` |
+| `POST` | `/api/proposals/{id}/documents/{docId}/confirm` · `/download` | Check the object in S3 / get an audited, short-lived download link |
 | `GET` | `/api/audit?entityType=&entityId=&actorId=&action=&from=&to=` | `MANAGER` / `AUDITOR` only |
 
 Every `/api` call needs a Keycloak access token (`Authorization: Bearer …`). Errors follow RFC 9457 (`application/problem+json`), including 401, 403, 412 and 428. The contract lives in `api/openapi.yaml` and the front-ends generate their clients from it.
@@ -361,11 +387,11 @@ vanilds.github.io/
 │       ├── mfe-proposals/# remote → EC2
 │       └── shared/       # auth, API client (generated types), i18n, UI bits — shared as a singleton
 ├── api/                  # Spring Boot service + openapi.yaml
-├── ai-worker/            # Python LangGraph worker
+├── ai-worker/            # Python LangGraph worker (README inside)
 ├── k8s/
 │   ├── base/             # Kustomize base manifests
 │   └── overlays/
-│       ├── local/        # kind in Codespaces (MinIO stands in for S3)
+│       ├── local/        # kind in Codespaces (SeaweedFS stands in for S3)
 │       └── aws/          # k3s on EC2 (real S3, TLS, smaller limits)
 ├── infra/aws/            # EC2 bootstrap, IAM policies, budget, start/stop scripts
 ├── docs/diagrams/        # branded PNGs + their sources (render.mjs, specs.py)
@@ -381,7 +407,7 @@ vanilds.github.io/
 - [x] **Phase 1 — CRUD backend**: customers and proposals in Spring Boot, Postgres + Flyway, CPF/CNPJ validation, pagination and filters, RFC 9457 errors, OpenAPI, Testcontainers, `docker compose up` in Codespaces.
 - [x] **Phase 2 — Security & workflow**: Keycloak realm with `ANALYST`/`MANAGER`/`AUDITOR`, JWT resource server, workflow with ownership and four-eyes, optimistic locking with `ETag`/`If-Match`, append-only audit log, CPF/CNPJ encrypted at rest, data masking.
 - [x] **Phase 3 — Portfolio & micro frontends**: shell with portfolio + resume on GitHub Pages, `mfe-customers` + `mfe-proposals` with Native Federation, offline fallback, clients generated from OpenAPI.
-- [ ] **Phase 4 — Events, AI & S3**: transactional outbox → RabbitMQ, retry/DLQ, idempotent LangGraph worker, presigned S3 uploads.
+- [x] **Phase 4 — Events, AI & S3**: transactional outbox → RabbitMQ with publisher confirms, retry and dead-letter queues, idempotent consumers on both sides, LangGraph worker (rules decide, the model only writes, guardrails check), presigned S3 uploads and audited downloads.
 - [ ] **Phase 5 — Kubernetes locally**: kind in Codespaces with Ingress, probes, limits, HPA.
 - [ ] **Phase 6 — AWS**: EC2 + k3s, IAM role, S3 buckets, SSM secrets, Budgets, TLS, GitHub Actions with OIDC, Argo CD, scheduled start/stop.
 - [ ] **Phase 7 — Operations**: Prometheus/Grafana dashboards, tracing by correlation-id, daily backups to S3 and a tested restore, incident drills written up in `docs/`.

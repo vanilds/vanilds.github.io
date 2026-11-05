@@ -3,3 +3,10 @@ creditdesk:
   crypto:
     encryption-key: KFDNBz/I41QIpBXrES30Gn19IoZ+F9yGz6jXSroLjkk=
     hash-key: K6VNxAbXqtpAwTpivojjffOzxF8SMIk4EtJh2uQq03M=
+  messaging:
+    outbox-poll: 100ms
+    retry-delay: 300ms             # short, so retry and dead-letter tests run in seconds
+    max-attempts: 3
+  storage:
+    bucket: test-documents
+    create-bucket: true

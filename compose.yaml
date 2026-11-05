@@ -1,8 +1,11 @@
 # Local stack for development: `docker compose up --build`
-# API on http://localhost:8080 (Swagger UI: /swagger-ui.html), Keycloak on http://localhost:8180, PostgreSQL on 5432.
+# API on http://localhost:8080 (Swagger UI: /swagger-ui.html), Keycloak on http://localhost:8180, PostgreSQL on 5432,
+# RabbitMQ management UI on http://localhost:15672 (creditdesk / creditdesk), local S3 (SeaweedFS) on 8333.
 # Demo users and how to get a token: infra/keycloak/README.md. Requests ready to send: api/requests.http.
 # Front-end (shell + micro frontends): cd web && npm run start:all → http://localhost:4200 (web/README.md).
-# Grows phase by phase (Keycloak, RabbitMQ, MinIO, worker); Kubernetes manifests live in k8s/.
+# Optional: summaries written by a language model — export LLM_BASE_URL, LLM_MODEL and LLM_API_KEY before
+# `docker compose up` (ai-worker/README.md). Without them the worker uses its rules template.
+# Kubernetes manifests live in k8s/.
 name: creditdesk
 
 services:
@@ -40,6 +43,34 @@ services:
     ports:
       - "8180:8080"
 
+  # Events between the API and the AI worker. Management UI on :15672 shows queues, retry and dead-letter queues.
+  rabbitmq:
+    image: public.ecr.aws/docker/library/rabbitmq:4.1-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: creditdesk
+      RABBITMQ_DEFAULT_PASS: creditdesk   # local only
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - rabbitmq:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # S3-compatible storage standing in for Amazon S3 (MinIO stopped publishing free images in 2025).
+  # Same API, same presigned URLs: the API code does not know which one it talks to.
+  seaweedfs:
+    image: chrislusf/seaweedfs:4.50
+    command: server -dir=/data -s3 -s3.port=8333 -s3.config=/etc/seaweedfs/s3.json -master.volumeSizeLimitMB=64 -volume.max=10
+    volumes:
+      - ./infra/seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro   # access key creditdesk / creditdesk-secret (local only)
+      - s3data:/data
+    ports:
+      - "8333:8333"
+
   api:
     build: ./api
     environment:
@@ -50,13 +81,37 @@ services:
       DB_PASSWORD: creditdesk
       OIDC_ISSUER_URI: http://localhost:8180/realms/creditdesk
       OIDC_JWK_SET_URI: http://keycloak:8080/realms/creditdesk/protocol/openid-connect/certs
+      RABBITMQ_HOST: rabbitmq
+      S3_ENDPOINT: http://seaweedfs:8333           # how the API reaches S3 inside this network
+      S3_PUBLIC_ENDPOINT: http://localhost:8333    # what goes into presigned URLs: the browser's address
     ports:
       - "8080:8080"
     depends_on:
       postgres:
         condition: service_healthy    # wait until Postgres accepts connections, not just until it starts
+      rabbitmq:
+        condition: service_healthy
+      seaweedfs:
+        condition: service_started
       keycloak:
         condition: service_started    # keys are fetched on the first request, so no need to wait for "healthy"
 
+  # Drafts the AI credit opinion for every submitted proposal (Python + LangGraph)
+  ai-worker:
+    build: ./ai-worker
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      # Optional language model (any OpenAI-compatible endpoint); empty = rules template
+      LLM_BASE_URL: ${LLM_BASE_URL:-}
+      LLM_MODEL: ${LLM_MODEL:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+    ports:
+      - "8000:8000"                   # /health and /metrics
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
 volumes:
   pgdata:
+  rabbitmq:
+  s3data:

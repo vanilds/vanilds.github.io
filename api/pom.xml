@@ -13,14 +13,27 @@
 
     <groupId>io.github.vanilds</groupId>
     <artifactId>creditdesk-api</artifactId>
-    <version>0.2.0</version>
+    <version>0.4.0</version>
     <name>creditdesk-api</name>
     <description>CreditDesk — credit and renegotiation proposals API</description>
 
     <properties>
         <java.version>21</java.version>
         <springdoc.version>2.8.17</springdoc.version>
+        <aws-sdk.version>2.36.0</aws-sdk.version>
     </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>software.amazon.awssdk</groupId>
+                <artifactId>bom</artifactId>
+                <version>${aws-sdk.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
 
     <dependencies>
         <!-- Web + JSON + RFC 9457 ProblemDetail -->
@@ -56,6 +69,33 @@
             <groupId>org.postgresql</groupId>
             <artifactId>postgresql</artifactId>
             <scope>runtime</scope>
+        </dependency>
+
+        <!-- Events: RabbitMQ (transactional outbox → topic exchange; retry + dead-letter queues) -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-amqp</artifactId>
+        </dependency>
+
+        <!-- Documents: Amazon S3 presigned URLs (SeaweedFS stands in for S3 locally). No HTTP client of its own:
+             the API never streams file bytes, it only signs URLs and checks objects with HEAD. -->
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>s3</artifactId>
+            <exclusions>
+                <exclusion>
+                    <groupId>software.amazon.awssdk</groupId>
+                    <artifactId>netty-nio-client</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>software.amazon.awssdk</groupId>
+                    <artifactId>apache-client</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>url-connection-client</artifactId>
         </dependency>
 
         <!-- Operations: health probes for Kubernetes, metrics for Prometheus -->
@@ -100,6 +140,17 @@
         <dependency>
             <groupId>org.testcontainers</groupId>
             <artifactId>postgresql</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>rabbitmq</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- Asynchronous assertions: "within 10 s the proposal is IN_ANALYSIS" instead of Thread.sleep -->
+        <dependency>
+            <groupId>org.awaitility</groupId>
+            <artifactId>awaitility</artifactId>
             <scope>test</scope>
         </dependency>
     </dependencies>

@@ -16,6 +16,11 @@ public enum AuditAction {
     PROPOSAL_APPROVED,
     PROPOSAL_REJECTED,
     PROPOSAL_RETURNED,
+    /** The AI worker's credit opinion arrived (advisory; the decision stays with a manager). */
+    PROPOSAL_OPINION_RECORDED,
+    PROPOSAL_DOCUMENT_ADDED,
+    /** Reading is audited here too: someone opened a file with personal financial data (LGPD). */
+    PROPOSAL_DOCUMENT_DOWNLOADED,
 
     /** Startup data migrations that touch personal data (e.g. encrypting existing CPFs). */
     SYSTEM_MIGRATION

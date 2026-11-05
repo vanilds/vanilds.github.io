@@ -125,6 +125,31 @@ public class Proposal {
         return previous;
     }
 
+    /**
+     * The AI worker's opinion is ready: the same move as {@link ProposalAction#START_ANALYSIS}, without the person
+     * checks. Four-eyes is about who <i>decides</i>, and deciding stays with a manager.
+     *
+     * @return false when the proposal is no longer waiting at this version (a manager already picked it up, or it
+     * was returned and submitted again): the opinion is kept, the status is left alone
+     */
+    public boolean startAnalysisAutomatically(long submittedVersion, Instant now) {
+        if (status != ProposalStatus.SUBMITTED || version != submittedVersion) {
+            return false;
+        }
+        status = ProposalStatus.IN_ANALYSIS;
+        updatedAt = now;
+        return true;
+    }
+
+    /** Documents back the proposal as written, so they can only be added while the owner can still edit it. */
+    public void requireCanAttachDocuments(Actor actor) {
+        requireOwner(actor);
+        if (status != ProposalStatus.DRAFT) {
+            throw ApiException.unprocessable("proposal-not-editable", "Proposal cannot be changed",
+                    "Documents can only be added while the proposal is a DRAFT; this one is %s.".formatted(status));
+        }
+    }
+
     private void requireOwner(Actor actor) {
         if (!actor.id().equals(analystId)) {
             throw ApiException.forbidden("not-proposal-owner", "Not your proposal",
