@@ -1,0 +1,58 @@
+name: EC2 start/stop
+
+# Saves AWS credit: the demo server runs only on weekdays, 08:00–20:00 (São Paulo).
+# Cron is in UTC: São Paulo is UTC-3, so 08:00 = 11:00 UTC and 20:00 = 23:00 UTC.
+# Use "Run workflow" in the Actions tab to start/stop it by hand (e.g. before an interview).
+
+on:
+  schedule:
+    - cron: "0 11 * * 1-5"   # start
+    - cron: "0 23 * * 1-5"   # stop
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "start or stop the demo server"
+        type: choice
+        options: [start, stop]
+        default: start
+
+permissions:
+  id-token: write   # lets the job get an OIDC token to assume the AWS role (no access keys)
+  contents: read
+
+concurrency: ec2-schedule
+
+jobs:
+  ec2:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Decide action
+        id: decide
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "action=${{ inputs.action }}" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event.schedule }}" = "0 11 * * 1-5" ]; then
+            echo "action=start" >> "$GITHUB_OUTPUT"
+          else
+            echo "action=stop" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Start instance
+        if: steps.decide.outputs.action == 'start'
+        run: |
+          aws ec2 start-instances --instance-ids "${{ vars.EC2_INSTANCE_ID }}"
+          aws ec2 wait instance-running --instance-ids "${{ vars.EC2_INSTANCE_ID }}"
+          echo "Demo server is running. DNS updates itself on boot (~1 min)."
+
+      - name: Stop instance
+        if: steps.decide.outputs.action == 'stop'
+        run: |
+          aws ec2 stop-instances --instance-ids "${{ vars.EC2_INSTANCE_ID }}"
+          aws ec2 wait instance-stopped --instance-ids "${{ vars.EC2_INSTANCE_ID }}"
+          echo "Demo server stopped."

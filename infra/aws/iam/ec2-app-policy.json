@@ -1,0 +1,35 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "DocumentsReadWrite",
+      "Effect": "Allow",
+      "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
+      "Resource": "arn:aws:s3:::creditdesk-documents-vanilds/*"
+    },
+    {
+      "Sid": "BackupsWrite",
+      "Effect": "Allow",
+      "Action": ["s3:PutObject", "s3:GetObject"],
+      "Resource": "arn:aws:s3:::creditdesk-backups-vanilds/*"
+    },
+    {
+      "Sid": "ListOwnBuckets",
+      "Effect": "Allow",
+      "Action": "s3:ListBucket",
+      "Resource": [
+        "arn:aws:s3:::creditdesk-documents-vanilds",
+        "arn:aws:s3:::creditdesk-backups-vanilds"
+      ]
+    },
+    {
+      "Sid": "ReadAppSecrets",
+      "Effect": "Allow",
+      "Action": ["ssm:GetParameter", "ssm:GetParameters", "ssm:GetParametersByPath"],
+      "Resource": [
+        "arn:aws:ssm:us-east-1:ACCOUNT_ID:parameter/creditdesk",
+        "arn:aws:ssm:us-east-1:ACCOUNT_ID:parameter/creditdesk/*"
+      ]
+    }
+  ]
+}

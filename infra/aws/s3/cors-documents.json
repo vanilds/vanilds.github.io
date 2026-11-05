@@ -1,0 +1,14 @@
+{
+  "CORSRules": [
+    {
+      "AllowedOrigins": [
+        "https://creditdesk.duckdns.org",
+        "https://vanilds.github.io"
+      ],
+      "AllowedMethods": ["PUT", "GET"],
+      "AllowedHeaders": ["Content-Type", "Content-MD5"],
+      "ExposeHeaders": ["ETag"],
+      "MaxAgeSeconds": 3000
+    }
+  ]
+}
