@@ -67,6 +67,9 @@ curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION="${K3S_VERSION}" INSTALL_K3S_
 # k3s installs Argo CD from this HelmChart file (its own Helm controller). After that, ONE Application ("root")
 # points Argo CD at k8s/argocd/apps, and Argo CD installs everything else from git: cert-manager, External
 # Secrets, KEDA, the Let's Encrypt issuers and CreditDesk. This script never needs to change for that.
+# The installer returns as soon as the k3s service is started; the service creates this folder a moment later.
+# Create it ourselves, or the download races k3s and fails ("curl: (23) Failure writing output").
+mkdir -p /var/lib/rancher/k3s/server/manifests
 curl -fsSL "${REPO_RAW}/infra/aws/k3s/argocd.yaml" -o /var/lib/rancher/k3s/server/manifests/argocd.yaml
 
 for _ in $(seq 1 90); do
