@@ -5,12 +5,14 @@
 
 Why a script and not JSON exported from the UI: an exported dashboard is ~2,000 lines of noise where a reviewer
 cannot see what changed. Here each panel is one line — title, query, unit — and the JSON is generated.
-Grafana mounts the generated files read-only (k8s/monitoring/kustomization.yaml → grafana-values.yaml).
+The JSON is imported into Grafana Cloud (infra/grafana-cloud/README.md).
 """
 import json
 from pathlib import Path
 
-DS = {"type": "prometheus", "uid": "prometheus"}
+# The datasource is a dashboard variable, so the same JSON works in any Grafana: in Grafana Cloud it resolves to
+# the stack's own Prometheus (grafanacloud-<stack>-prom).
+DS = {"type": "prometheus", "uid": "${datasource}"}
 HERE = Path(__file__).parent
 
 
@@ -77,7 +79,10 @@ class Board:
             "tags": ["creditdesk"], "timezone": "America/Sao_Paulo", "editable": False,
             "schemaVersion": 41, "version": 1, "refresh": "30s",
             "time": {"from": "now-6h", "to": "now"},
-            "panels": self.panels, "templating": {"list": []}, "annotations": {"list": []},
+            "panels": self.panels, "annotations": {"list": []},
+            "templating": {"list": [{
+                "name": "datasource", "label": "Data source", "type": "datasource", "query": "prometheus",
+                "current": {}, "hide": 0, "refresh": 1}]},
         }
 
 
@@ -156,8 +161,9 @@ def platform():
     b.stat("Last restore test", 'time() - max(kube_cronjob_status_last_successful_time{namespace="creditdesk", cronjob="postgres-restore-test"})',
            "s", [(8 * 86400, "orange"), (15 * 86400, "red")], w=4,
            description="A backup that was never restored is a hope, not a backup.")
-    b.stat("Prometheus data", "sum(prometheus_tsdb_storage_blocks_bytes) + sum(prometheus_tsdb_head_chunks_storage_size_bytes)",
-           "bytes", [(1200 * 2**20, "orange")], w=4)
+    b.stat("Monitoring on the node", 'sum(container_memory_working_set_bytes{namespace="monitoring"})',
+           "bytes", [(256 * 2**20, "orange"), (400 * 2**20, "red")], w=4,
+           description="Alloy + kube-state-metrics. In-cluster Prometheus + Grafana took the node down (incident 2026-11-05).")
     b.series("Node memory", [
         ("node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes", "used"),
         ("node_memory_SwapTotal_bytes - node_memory_SwapFree_bytes", "swap used"),

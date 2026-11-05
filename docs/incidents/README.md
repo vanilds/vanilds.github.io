@@ -1,6 +1,6 @@
 # Incidents: runbooks and drills
 
-Each alert in `k8s/monitoring/prometheus-values.yaml` links to a section here. A **runbook** says what to look
+Each alert in `k8s/monitoring/rules/creditdesk.yaml` (evaluated by Grafana Cloud) links to a section here. A **runbook** says what to look
 at and what to do; a **drill** breaks the thing on purpose, so the runbook is known to work before it is needed.
 Drill results go in the table at the end — date, what was seen, what was learned.
 
@@ -27,7 +27,7 @@ break, watch, let git heal it. Real fixes are commits.
 3. CrashLoop: `k logs <pod> --previous` shows why the last one died. `OOMKilled` in `describe` → see [OOM](#oom).
 4. Pending: `k describe pod` → "Insufficient memory" means the node is full → [OOM](#oom).
 
-**Drill — kill the API under load.** Grafana → CreditDesk — application, then:
+**Drill — kill the API under load.** Grafana Cloud → CreditDesk — application, then:
 `k delete pod -l app=api --wait=false` while clicking around the demo.
 Expected: Traefik 5xx for ~30–60 s (one replica: the new pod must pass its startup probe; Flyway + Spring on
 2 vCPUs), `ApiDown` goes *pending* but not *firing* (3 min). Lesson to check: with `minReplicas: 1` a lost pod is
@@ -104,8 +104,8 @@ goes up. Then read it (step 2) and purge it. Lesson: one bad message does not bl
 2. A container killed at its limit (OOMKilled, exit 137) → its limit is too low for its real working set, or it
    leaks. JVMs size their heap from the limit (`MaxRAMPercentage`), so raising the limit raises the heap too.
    Fix = a commit to `k8s/overlays/aws/kustomization.yaml`.
-3. Node short of memory → the kubelet evicts pods, monitoring first (priority −100). Grafana gone = a symptom.
-   Options, cheapest first: lower Prometheus retention, drop a dashboard nobody reads, move Keycloak to a smaller
+3. Node short of memory → the kubelet evicts pods, monitoring first (priority −100): gaps in the graphs are a
+   symptom. Options, cheapest first: stop changing two heavy things at once, trim Alloy's allowlist, move Keycloak to a smaller
    heap, or pay for a t4g.large (8 GB, ~2× the EC2 cost).
 
 **Drill — a container that eats memory.**
@@ -155,7 +155,7 @@ For real data loss (volume gone, bad migration, someone deleted data). **RPO**: 
    k exec -i postgres-0 -- sh -ec 'wget -qO- "$1" | { dropdb -U "$POSTGRES_USER" --force "$POSTGRES_DB" && createdb -U "$POSTGRES_USER" "$POSTGRES_DB" && pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --exit-on-error --no-owner --no-privileges; }' sh "$URL"
    ```
 5. `k scale deploy/api --replicas=1`. Flyway validates the schema at start; the HPA takes over again.
-6. Check: log in to the demo, open a proposal, and in Grafana the API is green. Events created after the backup
+6. Check: log in to the demo, open a proposal, and in Grafana Cloud the API is green. Events created after the backup
    are gone with their rows; documents in S3 uploaded after it remain but are no longer referenced.
 
 Rehearsed in the sandbox against the real schema and seed data: database dropped and restored from a dump, the
@@ -169,13 +169,56 @@ the latest backup. The demo seed (`R__Demo_data`) runs first on the empty databa
 
 ---
 
+## Incident 2026-11-05 — the first Phase 7 deploy took the node down
+
+Real incident, not a drill. Times are São Paulo.
+
+**Impact.** ~15:45–16:15: the demo's API and login answered 503 intermittently, then constantly for ~20 minutes.
+The portfolio (GitHub Pages) stayed up. No data lost: Postgres and RabbitMQ never restarted.
+
+**Timeline**
+
+| Time | What happened |
+|---|---|
+| 15:08 | PR #10 (Phase 7) merged. Argo CD created the monitoring app and restarted every app pod (new config hash). |
+| 15:10 | Grafana waits for its secret (`GRAFANA_ADMIN_PASSWORD` was not yet in SSM); created by hand, synced. |
+| 15:18 | `Images` publishes the new tag; Argo CD rolls the API and front ends **while** Prometheus starts and Grafana runs its first migrations. Load 23 on 2 vCPU, 1 GB in swap. Probes time out: Prometheus, node-exporter, kube-state-metrics restart. |
+| 15:25 | Grafana crash loop: no disk, so every restart re-ran its migrations, which outlasted the liveness probe. PR #11 written (disk + startup probe). |
+| 15:39 | Load still 6–7. The site flaps 200/503. |
+| ~15:45 | Memory exhausted: the kubelet stops reporting, **NodeNotReady**. Traefik has no ready endpoints: API and Keycloak 503. |
+| 15:52 | PR #11 merged — too late to help: the node could not apply anything. |
+| 16:16 | PR #12 merged: monitoring paused (Prometheus and Grafana at 0, exporters off). |
+| ~16:20 | Node Ready again without a reboot; app pods recovered on their own. metrics-server crash-looped a while longer (HPA without CPU). |
+| 16:28 | All Argo CD apps Healthy; API, Keycloak and front ends answered 10/10 probes. |
+
+**Root cause.** The node was already near its limit (≈700 MB available, ≈800 MB in swap, measured before
+Phase 7). Monitoring fit at rest (~350 MiB requested), but not at its **startup peak** coinciding with an image
+rollout: JVMs starting, Grafana migrating, Prometheus replaying its WAL. Requests and limits were sized for
+steady state; nothing reserved headroom for the worst minute.
+
+**What went right.** The demo's data was never at risk. GitOps made the mitigation one reviewed commit; the node
+recovered by itself once the load was gone, so no reboot (and no second startup peak) was needed.
+
+**What went wrong.** (1) Steady-state sizing on a node with no slack. (2) Two heavy changes deployed at once (the
+monitoring stack and new app images). (3) Probes tuned for an idle machine: on a saturated node, healthy
+processes were killed for being slow, which added more startups. (4) Diagnosis through SSM Run Command was slow
+because the same overloaded kubelet served it.
+
+**Changes**
+- Monitoring moves **out of the node**: Grafana Cloud (free tier) receives the metrics; only Grafana Alloy
+  (~100–150 MiB) and kube-state-metrics stay in the cluster. Dashboards and alert rules are kept as code.
+- `k8s/local/smoke.sh` waits until the API is *steadily* ready (the same restart race failed CI on PR #11).
+- Lesson for the next change of this size: deploy it alone, watch the node for 10 minutes, then the next one.
+
+---
+
 ## Drill log
 
 | Date | Drill | What happened | Time to recover | Learned / changed |
 |---|---|---|---|---|
 | 2026-11-05 | Restore test vs corrupted / incomplete dump (sandbox) | checksum failed; counts check failed, exit 1 | — | restore test fails loudly, as intended |
 | 2026-11-05 | Restore into a live database (sandbox) | drop → recreate → `pg_restore`; API restarted, Flyway validated 8 migrations | < 1 min | runbook steps 3–5 confirmed |
-| 2026-11-05 | First Phase 7 deploy (real, not a drill) | Grafana crash-looped: no disk → schema migrations at every start; under load (23 on 2 vCPU while the new images rolled out) they outlasted the liveness probe. Monitoring pods were first refused (PriorityClass not created yet). Prometheus/node-exporter restarted on probe timeouts during the peak. Demo stayed up (200s throughout). | ~25 min | Grafana: 1 Gi disk + startup probe + 384 Mi; PriorityClass sync-wave −1. Lesson: a probe tuned on an idle laptop is wrong on a busy node. |
+| 2026-11-05 | First Phase 7 deploy (real incident, [write-up above](#incident-2026-11-05--the-first-phase-7-deploy-took-the-node-down)) | Monitoring's startup peak + an image rollout exhausted memory: Grafana crash loop, probe-timeout restarts, then NodeNotReady and API/Keycloak 503 | ~30 min of 503s | Monitoring moved to Grafana Cloud; smoke.sh waits for steady readiness; deploy big changes one at a time |
 | | RabbitMQ down 5 min | | | |
 | | Kill the API pod | | | |
 | | Poison message → DLQ | | | |

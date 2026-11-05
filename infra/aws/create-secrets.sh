@@ -37,7 +37,6 @@ create RABBITMQ_PASSWORD "$(alnum)"
 create KEYCLOAK_ADMIN_PASSWORD "$(alnum)"
 create DOCUMENT_ENCRYPTION_KEY "$(openssl rand -base64 32)"   # AES-256-GCM key for CPF/CNPJ
 create DOCUMENT_HASH_KEY "$(openssl rand -base64 32)"         # HMAC key for searching CPF/CNPJ
-create GRAFANA_ADMIN_PASSWORD "$(alnum)"                        # Phase 7: Grafana login (user "admin")
 
 echo
 echo "Parameters under $PREFIX (names only):"

@@ -1,12 +1,10 @@
-# Monitoring (Phase 7): Prometheus + Grafana, inside the cluster, sized for what is left on a 4 GB node.
-# One Application, three sources:
-#   1. Prometheus chart  — values in k8s/monitoring/prometheus-values.yaml (scrape jobs, alert rules, retention)
-#   2. Grafana chart     — values in k8s/monitoring/grafana-values.yaml (datasource, dashboard folders)
-#   3. k8s/monitoring    — the objects around them: PriorityClass, Grafana admin secret (SSM), dashboards
-# The third source is also the "$values" reference the charts read their values from, so a change to a rule,
-# a dashboard or a limit is one commit, and Argo CD applies it.
-#
-# Neither UI is on the Internet: port-forward through SSM, like the Argo CD UI (docs/operations.md).
+# Monitoring (Phase 7, after the 2026-11-05 incident): the node only collects, Grafana Cloud does the rest.
+#   1. Grafana Alloy        — scrapes and ships samples to Grafana Cloud (k8s/monitoring/alloy/config.alloy)
+#   2. kube-state-metrics   — Kubernetes objects as metrics
+#   3. k8s/monitoring       — PriorityClass, the Alloy config, the Grafana Cloud endpoint (ConfigMap) and token
+#                             (External Secrets ← SSM). Also the "$values" source the two charts read from.
+# Dashboards and alert rules live in git too, but are uploaded to Grafana Cloud, not applied here
+# (k8s/monitoring/dashboards, k8s/monitoring/rules, infra/grafana-cloud).
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -15,18 +13,18 @@ metadata:
 spec:
   project: default
   sources:
+    - repoURL: https://grafana.github.io/helm-charts
+      chart: alloy
+      targetRevision: 1.15.0             # Alloy v1.21.3
+      helm:
+        releaseName: alloy
+        valueFiles: [$values/k8s/monitoring/alloy-values.yaml]
     - repoURL: https://prometheus-community.github.io/helm-charts
-      chart: prometheus
-      targetRevision: 29.40.3            # Prometheus v3.15
+      chart: kube-state-metrics
+      targetRevision: 8.8.0              # kube-state-metrics v2.20
       helm:
-        releaseName: prometheus
-        valueFiles: [$values/k8s/monitoring/prometheus-values.yaml]
-    - repoURL: https://grafana-community.github.io/helm-charts   # the chart moved here from grafana/helm-charts
-      chart: grafana
-      targetRevision: 14.3.1             # Grafana 13.3
-      helm:
-        releaseName: grafana
-        valueFiles: [$values/k8s/monitoring/grafana-values.yaml]
+        releaseName: kube-state-metrics
+        valueFiles: [$values/k8s/monitoring/kube-state-metrics-values.yaml]
     - repoURL: https://github.com/vanilds/vanilds.github.io.git
       targetRevision: main
       path: k8s/monitoring

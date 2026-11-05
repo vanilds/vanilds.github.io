@@ -1,0 +1,245 @@
+// Grafana Alloy: the only monitoring process on the node. It scrapes the same sources Prometheus used to and
+// ships the samples to Grafana Cloud (free tier). Storage, queries, dashboards and alert evaluation all happen
+// there, off the 4 GB node — see docs/incidents/README.md, "Incident 2026-11-05".
+//
+//   pods (annotations)  ┐
+//   RabbitMQ queues     │
+//   kube-state-metrics  ├─▶ keep only what dashboards/alerts use ─▶ remote_write ─▶ Grafana Cloud
+//   kubelet cAdvisor    │
+//   node (built in)     ┘
+//
+// The endpoint and user are not secret (ConfigMap); the token comes from SSM through External Secrets.
+
+prometheus.remote_write "cloud" {
+	endpoint {
+		url = sys.env("GRAFANA_CLOUD_PROM_URL")
+
+		basic_auth {
+			username = sys.env("GRAFANA_CLOUD_PROM_USER")
+			password = sys.env("GRAFANA_CLOUD_TOKEN")
+		}
+
+		// The node is stopped every night: a short queue, so a restart does not replay hours of samples.
+		queue_config {
+			max_samples_per_send = 2000
+			capacity             = 4000
+		}
+	}
+
+	external_labels = {
+		cluster = "creditdesk",
+	}
+
+	// Samples wait on disk only while Grafana Cloud is unreachable; 1 h is plenty for a demo.
+	wal {
+		max_keepalive_time = "1h"
+	}
+}
+
+// Allowlist: the free tier counts active series (10k). Only names used by k8s/monitoring/dashboards and
+// k8s/monitoring/rules leave the node. A new panel that needs a new metric = a new name here.
+prometheus.relabel "allowlist" {
+	forward_to = [prometheus.remote_write.cloud.receiver]
+
+	rule {
+		source_labels = ["__name__"]
+		action        = "keep"
+		regex         = "up|http_server_requests_seconds_(bucket|count|sum)|creditdesk_.*|jvm_memory_(used|max)_bytes|jvm_gc_pause_seconds_(sum|count)|hikaricp_connections_(active|pending|max)|rabbitmq_detailed_queue_(messages|consumers)|rabbitmq_alarms_.*|kube_pod_container_status_restarts_total|kube_pod_container_status_last_terminated_reason|kube_pod_container_resource_limits|kube_deployment_(spec_replicas|status_replicas|status_replicas_available)|kube_cronjob_status_last_successful_time|kube_job_status_failed|kube_horizontalpodautoscaler_(status_current_replicas|spec_max_replicas)|node_memory_(MemAvailable|MemTotal|SwapTotal|SwapFree)_bytes|node_filesystem_(avail|size)_bytes|node_cpu_seconds_total|node_load1|container_(memory_working_set_bytes|memory_swap|cpu_usage_seconds_total|oom_events_total)|traefik_service_requests_total|certmanager_certificate_expiration_timestamp_seconds"
+	}
+
+	// Health-check and metrics endpoints would otherwise be most of the API's request series
+	rule {
+		source_labels = ["__name__", "uri"]
+		action        = "drop"
+		regex         = "http_server_requests_seconds_.*;/actuator.*"
+	}
+}
+
+// ── Pods that ask to be scraped (prometheus.io/scrape: "true"): API, AI worker, Traefik, cert-manager ──────────
+discovery.kubernetes "pods" {
+	role = "pod"
+}
+
+discovery.relabel "annotated_pods" {
+	targets = discovery.kubernetes.pods.targets
+
+	rule {
+		source_labels = ["__meta_kubernetes_pod_annotation_prometheus_io_scrape"]
+		action        = "keep"
+		regex         = "true"
+	}
+
+	rule {
+		source_labels = ["__meta_kubernetes_pod_phase"]
+		action        = "drop"
+		regex         = "Pending|Succeeded|Failed|Completed"
+	}
+
+	rule {
+		source_labels = ["__meta_kubernetes_pod_annotation_prometheus_io_path"]
+		target_label  = "__metrics_path__"
+		regex         = "(.+)"
+	}
+
+	rule {
+		source_labels = ["__meta_kubernetes_pod_ip", "__meta_kubernetes_pod_annotation_prometheus_io_port"]
+		target_label  = "__address__"
+		regex         = "(.+);(\\d+)"
+		replacement   = "$1:$2"
+	}
+
+	// Pod labels become series labels (app="api"): the dashboards and rules filter on them
+	rule {
+		action = "labelmap"
+		regex  = "__meta_kubernetes_pod_label_(.+)"
+	}
+
+	rule {
+		source_labels = ["__meta_kubernetes_namespace"]
+		target_label  = "namespace"
+	}
+
+	rule {
+		source_labels = ["__meta_kubernetes_pod_name"]
+		target_label  = "pod"
+	}
+}
+
+prometheus.scrape "pods" {
+	job_name        = "kubernetes-pods"
+	targets         = discovery.relabel.annotated_pods.output
+	scrape_interval = "30s"
+	honor_labels    = true
+	forward_to      = [prometheus.relabel.allowlist.receiver]
+}
+
+// ── RabbitMQ: one series per queue (depth, consumers) and the broker's resource alarms ──────────────────────
+discovery.kubernetes "creditdesk_endpoints" {
+	role = "endpoints"
+
+	namespaces {
+		names = ["creditdesk"]
+	}
+}
+
+discovery.relabel "rabbitmq" {
+	targets = discovery.kubernetes.creditdesk_endpoints.targets
+
+	rule {
+		source_labels = ["__meta_kubernetes_service_name", "__meta_kubernetes_endpoint_port_name"]
+		action        = "keep"
+		regex         = "rabbitmq;metrics"
+	}
+
+	rule {
+		source_labels = ["__meta_kubernetes_pod_name"]
+		target_label  = "pod"
+	}
+}
+
+prometheus.scrape "rabbitmq_queues" {
+	job_name        = "rabbitmq"
+	targets         = discovery.relabel.rabbitmq.output
+	metrics_path    = "/metrics/detailed"
+	params          = {"family" = ["queue_coarse_metrics", "queue_consumer_count"]}
+	scrape_interval = "30s"
+	forward_to      = [prometheus.relabel.allowlist.receiver]
+}
+
+prometheus.scrape "rabbitmq_node" {
+	job_name        = "rabbitmq-node"
+	targets         = discovery.relabel.rabbitmq.output
+	scrape_interval = "30s"
+	forward_to      = [prometheus.relabel.allowlist.receiver]
+}
+
+// ── kube-state-metrics: restarts, OOM kills, replicas, backup jobs ──────────────────────────────────────────
+discovery.kubernetes "monitoring_services" {
+	role = "service"
+
+	namespaces {
+		names = ["monitoring"]
+	}
+}
+
+discovery.relabel "kube_state_metrics" {
+	targets = discovery.kubernetes.monitoring_services.targets
+
+	rule {
+		source_labels = ["__meta_kubernetes_service_name", "__meta_kubernetes_service_port_name"]
+		action        = "keep"
+		regex         = "kube-state-metrics;http"
+	}
+}
+
+prometheus.scrape "kube_state_metrics" {
+	job_name        = "kube-state-metrics"
+	targets         = discovery.relabel.kube_state_metrics.output
+	scrape_interval = "30s"
+	honor_labels    = true // keep the namespace/pod of the object, not of kube-state-metrics
+	forward_to      = [prometheus.relabel.allowlist.receiver]
+}
+
+// ── Containers (cAdvisor, from the kubelet): memory vs limit, CPU, OOM events ────────────────────────────────
+discovery.kubernetes "nodes" {
+	role = "node"
+}
+
+prometheus.scrape "cadvisor" {
+	job_name          = "cadvisor"
+	targets           = discovery.kubernetes.nodes.targets // __address__ = <node IP>:10250, the kubelet
+	scheme            = "https"
+	metrics_path      = "/metrics/cadvisor"
+	scrape_interval   = "30s"
+	bearer_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token" // RBAC: nodes/metrics only
+
+	// The kubelet's serving certificate is self-signed by k3s and does not name the node IP. The request never
+	// leaves the node (Alloy runs on it), and the token is checked by the kubelet either way.
+	tls_config {
+		insecure_skip_verify = true
+	}
+
+	forward_to = [prometheus.relabel.cadvisor_noise.receiver]
+}
+
+prometheus.relabel "cadvisor_noise" {
+	forward_to = [prometheus.relabel.allowlist.receiver]
+
+	// The pod-level aggregate (container="") and the pause container would double every pod's numbers
+	rule {
+		source_labels = ["container"]
+		action        = "drop"
+		regex         = "|POD"
+	}
+}
+
+// ── The node itself: memory, swap, disk, CPU. Built into Alloy, no node-exporter pod. ───────────────────────
+prometheus.exporter.unix "node" {
+	procfs_path = "/host/proc"
+	sysfs_path  = "/host/sys"
+	rootfs_path = "/host/root"
+
+	set_collectors = ["cpu", "filesystem", "loadavg", "meminfo"]
+
+	filesystem {
+		mount_points_exclude = "^/(dev|proc|run|sys|var/lib/kubelet/.+|var/lib/rancher/k3s/agent/containerd/.+)($|/)"
+	}
+}
+
+// The exporter labels its target job="integrations/unix"; the rules use the shorter "node"
+// (ApiDown only fires while up{job="node"} says the node itself is reporting).
+discovery.relabel "node" {
+	targets = prometheus.exporter.unix.node.targets
+
+	rule {
+		target_label = "job"
+		replacement  = "node"
+	}
+}
+
+prometheus.scrape "node" {
+	job_name        = "node"
+	targets         = discovery.relabel.node.output
+	scrape_interval = "30s"
+	forward_to      = [prometheus.relabel.allowlist.receiver]
+}

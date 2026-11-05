@@ -1,0 +1,29 @@
+# The Grafana Cloud access-policy token (scope metrics:write), from SSM like every other secret. Created by
+# the user in CloudShell (docs/operations.md, "Turning monitoring on"); never in git, never printed.
+apiVersion: external-secrets.io/v1
+kind: SecretStore
+metadata:
+  name: aws-ssm
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  provider:
+    aws:
+      service: ParameterStore
+      region: us-east-1          # no "auth": the EC2 instance role, allowed to read /creditdesk/* only
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: grafana-cloud-token
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  refreshInterval: 1h
+  secretStoreRef: { kind: SecretStore, name: aws-ssm }
+  target:
+    name: grafana-cloud-token
+    creationPolicy: Owner
+    deletionPolicy: Retain
+  data:
+    - { secretKey: GRAFANA_CLOUD_TOKEN, remoteRef: { key: /creditdesk/app/GRAFANA_CLOUD_TOKEN } }

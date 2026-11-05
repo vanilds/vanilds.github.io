@@ -1,20 +1,26 @@
-# Objects that go with the Prometheus and Grafana charts (k8s/argocd/apps/monitoring.yaml). The *-values.yaml
-# files in this folder are read by the charts, not by kustomize.
+# Objects that go with the Alloy and kube-state-metrics charts (k8s/argocd/apps/monitoring.yaml). The
+# *-values.yaml files in this folder are read by the charts, not by kustomize. dashboards/ and rules/ are
+# uploaded to Grafana Cloud (infra/grafana-cloud), not applied to the cluster.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: monitoring
 
 resources:
   - priority-class.yaml
-  - grafana-secret.yaml
+  - grafana-cloud-token.yaml
 
-# Dashboards as code: the JSON files are built by dashboards/build.py and mounted into Grafana as files
-# (dashboardsConfigMaps in grafana-values.yaml). Editing a panel in the UI is lost at the next restart — change
-# build.py, run it, commit. Fixed name: the Grafana chart refers to it by name.
 configMapGenerator:
-  - name: grafana-dashboards-creditdesk
+  # The pipeline itself. Fixed name: the Alloy chart refers to it by name; its config-reloader sidecar applies a
+  # change without restarting the pod.
+  - name: alloy-config
     files:
-      - dashboards/creditdesk-application.json
-      - dashboards/creditdesk-platform.json
+      - alloy/config.alloy
+    options:
+      disableNameSuffixHash: true
+  # Where to send. Not secret: from the Grafana Cloud portal, stack whitecabinet2163 → Prometheus → Details (region prod-sa-east-1).
+  - name: grafana-cloud
+    literals:
+      - GRAFANA_CLOUD_PROM_URL=https://prometheus-prod-40-prod-sa-east-1.grafana.net/api/prom/push
+      - GRAFANA_CLOUD_PROM_USER=3741422
     options:
       disableNameSuffixHash: true

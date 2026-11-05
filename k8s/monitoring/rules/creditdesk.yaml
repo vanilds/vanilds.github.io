@@ -1,0 +1,149 @@
+# CreditDesk alert and recording rules, evaluated by Grafana Cloud (Mimir ruler) — not inside the cluster.
+# Synced with infra/grafana-cloud/sync-rules.sh; checked in CI with promtool.
+#
+# The EC2 is stopped at night and on weekends, so "no data" is normal off-hours. Rules that fire on missing data
+# (ApiDown) only count when the node itself is reporting (up{job="node"}); the rest compare values that simply
+# do not exist while the node is off.
+groups:
+- name: creditdesk-api.recording
+  rules:
+  - record: creditdesk:http_requests:rate5m
+    expr: sum by (uri, method, status) (rate(http_server_requests_seconds_count{app="api", uri!~"/actuator.*"}[5m]))
+  - record: creditdesk:http_errors:ratio_rate5m
+    expr: 'sum(rate(http_server_requests_seconds_count{app="api", uri!~"/actuator.*", status=~"5.."}[5m]))
+
+      / clamp_min(sum(rate(http_server_requests_seconds_count{app="api", uri!~"/actuator.*"}[5m])), 0.001)
+
+      '
+  - record: creditdesk:http_latency:p95_5m
+    expr: histogram_quantile(0.95, sum by (le) (rate(http_server_requests_seconds_bucket{app="api", uri!~"/actuator.*"}[5m])))
+- name: creditdesk-app
+  rules:
+  - alert: ApiDown
+    expr: absent(up{app="api"} == 1) and on() (count(up{job="node"} == 1) > 0)
+    for: 3m
+    labels:
+      severity: critical
+    annotations:
+      summary: No API pod is answering /actuator/prometheus
+      runbook: https://github.com/vanilds/vanilds.github.io/blob/main/docs/incidents/README.md#api-down
+  - alert: ApiErrorRateHigh
+    expr: creditdesk:http_errors:ratio_rate5m > 0.05 and sum(rate(http_server_requests_seconds_count{app="api"}[5m])) > 0.05
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: More than 5% of API requests fail with 5xx ({{ $value | humanizePercentage }})
+      runbook: https://github.com/vanilds/vanilds.github.io/blob/main/docs/incidents/README.md#api-errors
+  - alert: ApiSlow
+    expr: creditdesk:http_latency:p95_5m > 1
+    for: 10m
+    labels:
+      severity: warning
+    annotations:
+      summary: API p95 latency above 1 s ({{ $value | humanizeDuration }})
+  - alert: OutboxBacklog
+    expr: max(creditdesk_outbox_pending) > 20
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: '{{ $value }} events waiting in the outbox (RabbitMQ unreachable?)'
+      runbook: https://github.com/vanilds/vanilds.github.io/blob/main/docs/incidents/README.md#rabbitmq-down
+  - alert: OpinionQueueBacklog
+    expr: rabbitmq_detailed_queue_messages{queue="ai-worker.proposal-submitted"} > 25
+    for: 10m
+    labels:
+      severity: warning
+    annotations:
+      summary: '{{ $value }} proposals waiting for an AI opinion (worker not scaling?)'
+      runbook: https://github.com/vanilds/vanilds.github.io/blob/main/docs/incidents/README.md#worker-stuck
+  - alert: DeadLetters
+    expr: rabbitmq_detailed_queue_messages{queue=~".*\\.dlq"} > 0
+    for: 1m
+    labels:
+      severity: warning
+    annotations:
+      summary: '{{ $value }} message(s) in {{ $labels.queue }} — they will not be retried by themselves'
+      runbook: https://github.com/vanilds/vanilds.github.io/blob/main/docs/incidents/README.md#dead-letters
+  - alert: RabbitMqMemoryAlarm
+    expr: max(rabbitmq_alarms_memory_used_watermark) > 0 or max(rabbitmq_alarms_free_disk_space_watermark) > 0
+    for: 1m
+    labels:
+      severity: critical
+    annotations:
+      summary: RabbitMQ raised a resource alarm and is blocking publishers
+- name: creditdesk-platform
+  rules:
+  - alert: PodCrashLooping
+    expr: increase(kube_pod_container_status_restarts_total{namespace=~"creditdesk|monitoring"}[15m]) >= 3
+    labels:
+      severity: warning
+    annotations:
+      summary: '{{ $labels.namespace }}/{{ $labels.pod }} restarted {{ $value | humanize }} times in 15 min'
+  - alert: ContainerOomKilled
+    expr: 'increase(kube_pod_container_status_restarts_total[10m]) > 0
+
+      and on (namespace, pod, container) kube_pod_container_status_last_terminated_reason{reason="OOMKilled"} == 1
+
+      '
+    labels:
+      severity: warning
+    annotations:
+      summary: '{{ $labels.namespace }}/{{ $labels.pod }} ({{ $labels.container }}) was OOM-killed: its memory limit is too
+        low'
+      runbook: https://github.com/vanilds/vanilds.github.io/blob/main/docs/incidents/README.md#oom
+  - alert: DeploymentNotReady
+    expr: kube_deployment_status_replicas_available{namespace="creditdesk"} < kube_deployment_spec_replicas{namespace="creditdesk"}
+      and kube_deployment_spec_replicas{namespace="creditdesk"} > 0
+    for: 10m
+    labels:
+      severity: warning
+    annotations:
+      summary: '{{ $labels.deployment }} has fewer ready pods than it wants'
+  - alert: NodeMemoryLow
+    expr: node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes < 0.10
+    for: 10m
+    labels:
+      severity: warning
+    annotations:
+      summary: Only {{ $value | humanizePercentage }} of the node's memory is available
+      runbook: https://github.com/vanilds/vanilds.github.io/blob/main/docs/incidents/README.md#oom
+  - alert: NodeSwapHeavy
+    expr: (node_memory_SwapTotal_bytes - node_memory_SwapFree_bytes) / clamp_min(node_memory_SwapTotal_bytes, 1) > 0.6
+    for: 15m
+    labels:
+      severity: warning
+    annotations:
+      summary: '{{ $value | humanizePercentage }} of swap in use: the node is short of memory and getting slow'
+  - alert: NodeDiskFilling
+    expr: node_filesystem_avail_bytes{mountpoint="/", fstype!="tmpfs"} / node_filesystem_size_bytes{mountpoint="/", fstype!="tmpfs"}
+      < 0.15
+    for: 15m
+    labels:
+      severity: warning
+    annotations:
+      summary: Root disk has {{ $value | humanizePercentage }} free
+  - alert: BackupMissing
+    expr: time() - max(kube_cronjob_status_last_successful_time{namespace="creditdesk", cronjob="postgres-backup"}) > 72 *
+      3600
+    for: 30m
+    labels:
+      severity: critical
+    annotations:
+      summary: No successful database backup in the last 72 hours
+      runbook: https://github.com/vanilds/vanilds.github.io/blob/main/docs/incidents/README.md#backup-failed
+  - alert: BackupJobFailed
+    expr: kube_job_status_failed{namespace="creditdesk", job_name=~"postgres-(backup|restore-test).*"} > 0
+    labels:
+      severity: critical
+    annotations:
+      summary: Job {{ $labels.job_name }} failed
+      runbook: https://github.com/vanilds/vanilds.github.io/blob/main/docs/incidents/README.md#backup-failed
+  - alert: CertificateExpiringSoon
+    expr: certmanager_certificate_expiration_timestamp_seconds - time() < 14 * 86400
+    for: 1h
+    labels:
+      severity: warning
+    annotations:
+      summary: TLS certificate {{ $labels.name }} expires in {{ $value | humanizeDuration }} (renewal stuck?)

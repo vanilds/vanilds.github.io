@@ -55,7 +55,7 @@ EC2 (k3s) ── Argo CD polls main ◀──┘──▶ applies k8s/overlays/a
 | Use a language model for the opinions | Create `/creditdesk/app/LLM_API_KEY`, add it to `k8s/overlays/aws/secrets.yaml`, set `LLM_BASE_URL` / `LLM_MODEL` in the overlay. |
 | Change the Keycloak realm | Edit `infra/keycloak/creditdesk-realm.json` and merge: the realm is re-imported at every start. The admin console is deliberately unreachable from the Internet (403). |
 | Start over | `bash recreate-ec2.sh`. The cluster is rebuilt from git; SSM secrets and S3 documents are untouched; the database starts from the demo seed — then restore the latest backup ([runbook](incidents/README.md#restore-the-database-from-a-backup)). |
-| Open Grafana / Prometheus, backups, follow a request | [operations.md](operations.md). |
+| Dashboards and alerts (Grafana Cloud), backups, follow a request | [operations.md](operations.md). |
 | Something is broken | [incidents/README.md](incidents/README.md) — one runbook per alert. |
 
 ## Why it is built this way
