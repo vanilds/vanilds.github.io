@@ -42,7 +42,8 @@
         "http://localhost:4200/*",
         "http://localhost:4201/*",
         "http://localhost:4202/*",
-        "https://vanilds.github.io/*"
+        "https://vanilds.github.io/*",
+        "${CREDITDESK_PUBLIC_URL:http://localhost:8088}/*"
       ],
       "webOrigins": [
         "+"

@@ -30,7 +30,7 @@ flowchart LR
     subgraph aws["AWS us-east-1"]
         subgraph ec2["EC2 t4g.medium · k3s"]
             remotes["mfe-customers · mfe-proposals<br/>(remotes)"]
-            backend["api · ai-worker · Keycloak<br/>Postgres · RabbitMQ · Redis"]
+            backend["api · ai-worker · Keycloak<br/>Postgres · RabbitMQ"]
         end
         s3[("Amazon S3<br/>documents · DB backups")]
     end
@@ -69,9 +69,9 @@ flowchart TB
             sg{{"Security Group<br/>in: 80, 443<br/>SSH: closed (SSM Session Manager)"}}
             subgraph ec2["EC2 t4g.medium (arm64, 2 vCPU, 4 GB + 2 GB swap)"]
                 subgraph k3s["k3s single-node cluster"]
-                    ingress["Ingress NGINX<br/>+ cert-manager (Let's Encrypt)"]
+                    ingress["Traefik Ingress (built into k3s)<br/>+ cert-manager (Let's Encrypt)"]
                     apps["namespace creditdesk<br/>mfe-customers · mfe-proposals · api<br/>ai-worker · keycloak"]
-                    data["Postgres · RabbitMQ · Redis<br/>(StatefulSets on local-path PVCs)"]
+                    data["Postgres · RabbitMQ<br/>(StatefulSets on local-path PVCs)"]
                     argo["Argo CD"]
                     obs["Prometheus · Grafana"]
                     cron["CronJob: pg_dump → S3 (daily)"]
@@ -122,15 +122,15 @@ flowchart LR
     user([Analyst / manager])
 
     subgraph k8s["k3s · namespace creditdesk"]
-        ing[Ingress NGINX<br/>TLS]
+        ing[Traefik Ingress<br/>one address · TLS]
         mfec["mfe-customers<br/>customer CRUD"]
         mfep["mfe-proposals<br/>proposals · workflow · AI opinion"]
         kc["Keycloak<br/>OIDC · roles"]
-        api["api<br/>Spring Boot 3 / Java 21"]
+        api["api<br/>Spring Boot 3 / Java 21 · HPA 1–3"]
         worker["ai-worker<br/>Python + LangGraph"]
         mq[("RabbitMQ<br/>exchange: creditdesk.events<br/>retry + dead-letter queues")]
         db[("PostgreSQL")]
-        cache[("Redis<br/>rate limit · cache")]
+        keda["KEDA<br/>0–3 workers by queue length"]
     end
 
     shell["shell<br/>(GitHub Pages)"]
@@ -147,10 +147,11 @@ flowchart LR
     ing -- "/api" --> api
     api -- "validate JWT" --> kc
     api --> db
-    api --> cache
     api -- "presigned URLs" --> s3
     api -- "proposal.submitted<br/>(transactional outbox)" --> mq
     mq -- "proposal.submitted" --> worker
+    keda -. "reads queue length" .-> mq
+    keda -. "scales 0–3" .-> worker
     worker -- "summary text only,<br/>no personal data" --> llm
     worker -- "opinion.drafted" --> mq
     mq -- "opinion.drafted" --> api
@@ -357,7 +358,35 @@ How to run it, the demo users and the design decisions are in [`api/README.md`](
 
 ---
 
-## 7. Tech stack
+## 7. Running it on Kubernetes (kind)
+
+Open a codespace on `main` and run:
+
+```bash
+k8s/local/up.sh      # cluster + Traefik/KEDA/metrics-server + images + deploy, waits until ready (~10 min the first time)
+k8s/local/smoke.sh   # end-to-end check through the Ingress
+k8s/local/down.sh    # throw the cluster away
+```
+
+Port **8088** opens the whole demo (`/` shell, `/demo`, `/api`, `/auth`, `/mfe/*`). The 8 GB codespace fits either `docker compose` **or** the cluster, not both. The same `up.sh` + `smoke.sh` run on every pull request in `.github/workflows/k8s.yml`.
+
+| Decision | Why |
+|---|---|
+| **One address, split by path** (`/api`, `/auth`, `/mfe/*`, `/creditdesk-documents`, `/`) | Same origin for the browser: no CORS between the apps, one place for TLS. Paths are never rewritten — presigned S3 URLs are signed over the exact path and `Host`, so a rewrite would turn every upload into a 403. |
+| **One `PUBLIC_URL`, everything derived** (token issuer, Keycloak `--hostname`, CORS, presigned URLs, login redirect) | The Codespaces URL is different for every codespace; one value set by `up.sh` keeps them consistent. Keycloak fills the realm's `${CREDITDESK_PUBLIC_URL}` placeholder at import. |
+| **Traefik**, standard Ingress API only | Ingress NGINX was retired by the Kubernetes project in March 2026; Traefik ships with k3s, so kind and EC2 run the same controller. |
+| **Three probes with different questions** | *startup*: may take 3 min (Flyway + Spring on 2 vCPUs) without being killed; *readiness*: may receive traffic; *liveness*: process not stuck — it never checks Postgres or RabbitMQ, because restarting every pod during a database outage only adds a restart storm. |
+| **Memory limits, no CPU limit on the JVMs** | CPU limits throttle the JVM even on an idle node; the memory limit protects the node and sizes the heap (`MaxRAMPercentage`). |
+| **HPA on CPU for the API (1–3), KEDA on queue length for the worker (0–3)** | API requests are short and CPU-bound. The worker mostly waits (broker, model), so CPU says nothing — the queue length says exactly how much work is waiting, and an empty queue means zero pods. Messages wait safely in the durable queue while the worker is at zero. |
+| **No `replicas` in Deployments the autoscalers own** | Otherwise every `kubectl apply` / Argo CD sync would reset what the HPA chose. |
+| **Graceful shutdown**: `preStop` sleep → SIGTERM → Spring finishes in-flight requests | The Ingress needs a few seconds to stop routing to a terminating pod; without the pause, rollouts drop requests. `maxUnavailable: 0` keeps capacity during rollouts. |
+| **Non-root, read-only root filesystem, all capabilities dropped** | Numeric uids (`10001`, nginx `101`) so `runAsNonRoot` can verify them; only `/tmp` is writable (an `emptyDir`). |
+| **Kustomize generators for config, secrets and the realm** | Content hash in the name: change a value and the pods that use it roll automatically. Secrets are random per environment (`up.sh`, git-ignored); on AWS they will come from SSM. |
+| **Images loaded into kind, no registry** | `kind load docker-image` + `imagePullPolicy: IfNotPresent`: nothing to publish to try the system locally. GHCR multi-arch images come with Phase 6. |
+
+---
+
+## 8. Tech stack
 
 | Layer | Choice | Why it's here |
 |---|---|---|
@@ -367,16 +396,16 @@ How to run it, the demo users and the design decisions are in [`api/README.md`](
 | API | Java 21, Spring Boot 3, Spring Security, Spring Data JPA, Flyway, Bean Validation, springdoc, AWS SDK v2 | Layered design, validation, migrations, contracts, optimistic locking, transactional outbox |
 | Async | RabbitMQ (topic exchange, retry + dead-letter queues) | AI opinion is slow; the UI must not wait for it |
 | AI | Python 3.12, LangGraph | An agent that assists a human decision, using masked data only |
-| Data | PostgreSQL 16, Redis 7 | Relational model; Redis for rate-limiting the public demo login |
+| Data | PostgreSQL 16 | Relational model; login rate limiting is Keycloak's brute-force detection, so no extra cache is needed |
 | Cloud | AWS EC2 (t4g), S3, IAM roles, SSM, Budgets | Real AWS, least-privilege, no static keys |
-| Orchestration | k3s; Deployments, StatefulSets, Services, Ingress, ConfigMaps, Secrets, probes, limits, CronJobs | The core learning goal; HPA demonstrated on the local kind cluster |
+| Orchestration | Kubernetes (kind locally, k3s on EC2), Kustomize, Traefik Ingress, startup/readiness/liveness probes, requests/limits, HPA (CPU) for the API, KEDA (queue length, scale to zero) for the worker | The core learning goal; the same manifests run in Codespaces, in CI and on EC2 |
 | CI/CD | GitHub Actions (OIDC to AWS), GHCR multi-arch images, Argo CD | Push-to-deploy, GitOps |
 | Observability | Micrometer, OpenTelemetry, Prometheus, Grafana | Follow one `correlation-id` from the browser to the worker |
 | Dev environment | GitHub Codespaces + kind | Everything runs in the browser — no powerful laptop needed |
 
 ---
 
-## 8. Repository layout
+## 9. Repository layout
 
 ```
 vanilds.github.io/
@@ -390,8 +419,9 @@ vanilds.github.io/
 ├── ai-worker/            # Python LangGraph worker (README inside)
 ├── k8s/
 │   ├── base/             # Kustomize base manifests
+│   ├── local/            # up.sh · smoke.sh · down.sh for the kind cluster
 │   └── overlays/
-│       ├── local/        # kind in Codespaces (SeaweedFS stands in for S3)
+│       ├── local/        # kind in Codespaces and CI (SeaweedFS stands in for S3)
 │       └── aws/          # k3s on EC2 (real S3, TLS, smaller limits)
 ├── infra/aws/            # EC2 bootstrap, IAM policies, budget, start/stop scripts
 ├── docs/diagrams/        # branded PNGs + their sources (render.mjs, specs.py)
@@ -402,13 +432,13 @@ vanilds.github.io/
 
 ---
 
-## 9. Roadmap
+## 10. Roadmap
 
 - [x] **Phase 1 — CRUD backend**: customers and proposals in Spring Boot, Postgres + Flyway, CPF/CNPJ validation, pagination and filters, RFC 9457 errors, OpenAPI, Testcontainers, `docker compose up` in Codespaces.
 - [x] **Phase 2 — Security & workflow**: Keycloak realm with `ANALYST`/`MANAGER`/`AUDITOR`, JWT resource server, workflow with ownership and four-eyes, optimistic locking with `ETag`/`If-Match`, append-only audit log, CPF/CNPJ encrypted at rest, data masking.
 - [x] **Phase 3 — Portfolio & micro frontends**: shell with portfolio + resume on GitHub Pages, `mfe-customers` + `mfe-proposals` with Native Federation, offline fallback, clients generated from OpenAPI.
 - [x] **Phase 4 — Events, AI & S3**: transactional outbox → RabbitMQ with publisher confirms, retry and dead-letter queues, idempotent consumers on both sides, LangGraph worker (rules decide, the model only writes, guardrails check), presigned S3 uploads and audited downloads.
-- [ ] **Phase 5 — Kubernetes locally**: kind in Codespaces with Ingress, probes, limits, HPA.
+- [x] **Phase 5 — Kubernetes locally**: kind in Codespaces and CI, one Traefik Ingress for every app (presigned S3 URLs included), startup/readiness/liveness probes, requests/limits, non-root read-only pods, HPA for the API, KEDA scaling the worker from zero on queue length, end-to-end smoke test in CI.
 - [ ] **Phase 6 — AWS**: EC2 + k3s, IAM role, S3 buckets, SSM secrets, Budgets, TLS, GitHub Actions with OIDC, Argo CD, scheduled start/stop.
 - [ ] **Phase 7 — Operations**: Prometheus/Grafana dashboards, tracing by correlation-id, daily backups to S3 and a tested restore, incident drills written up in `docs/`.
 

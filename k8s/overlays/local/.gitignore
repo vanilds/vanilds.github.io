@@ -1,0 +1,3 @@
+# Written by k8s/local/up.sh (local values, never committed)
+local.env
+secrets.env

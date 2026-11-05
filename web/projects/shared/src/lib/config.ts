@@ -28,20 +28,41 @@ export const LOCAL_ENVIRONMENT: CreditDeskEnvironment = {
   },
 };
 
-/** Public demo on the EC2 cluster (Phase 6). Offline outside weekdays 08:00–20:00 São Paulo. */
-export const PUBLIC_ENVIRONMENT: CreditDeskEnvironment = {
-  apiUrl: 'https://creditdesk.duckdns.org',
-  authority: 'https://creditdesk.duckdns.org/auth/realms/creditdesk',
-  clientId: 'creditdesk-web',
-  remotes: {
-    customers: 'https://creditdesk.duckdns.org/mfe/customers/remoteEntry.json',
-    proposals: 'https://creditdesk.duckdns.org/mfe/proposals/remoteEntry.json',
-  },
-};
+/**
+ * A cluster serves everything from one origin, split by path (k8s/base/ingress.yaml):
+ * `/api` → API, `/auth` → Keycloak, `/mfe/*` → micro frontends, `/` → shell.
+ */
+export function clusterEnvironment(origin: string): CreditDeskEnvironment {
+  return {
+    apiUrl: origin,
+    authority: `${origin}/auth/realms/creditdesk`,
+    clientId: 'creditdesk-web',
+    remotes: {
+      customers: `${origin}/mfe/customers/remoteEntry.json`,
+      proposals: `${origin}/mfe/proposals/remoteEntry.json`,
+    },
+  };
+}
 
-/** Same build, two environments: decided by where the page is served from, not by a rebuild. */
-export function environmentFor(hostname: string): CreditDeskEnvironment {
-  return hostname === 'localhost' || hostname === '127.0.0.1'
-    ? LOCAL_ENVIRONMENT
-    : PUBLIC_ENVIRONMENT;
+/** Public demo on the EC2 cluster (Phase 6). Offline outside weekdays 08:00–20:00 São Paulo. */
+export const PUBLIC_ENVIRONMENT: CreditDeskEnvironment = clusterEnvironment('https://creditdesk.duckdns.org');
+
+/** Ports of the Angular dev servers (`npm run start:all`), which talk to the docker compose stack. */
+const DEV_SERVER_PORTS = ['4200', '4201', '4202'];
+
+/**
+ * Same build everywhere: the environment is decided by where the page is served from, not by a rebuild.
+ * - Angular dev server on localhost → docker compose stack
+ * - GitHub Pages (vanilds.github.io) → public demo cluster
+ * - anything else is a cluster serving the shell itself (kind in Codespaces, the EC2 domain…) → same origin
+ */
+export function environmentFor(location: Pick<Location, 'hostname' | 'port' | 'origin'>): CreditDeskEnvironment {
+  const isLocalHost = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+  if (isLocalHost && DEV_SERVER_PORTS.includes(location.port)) {
+    return LOCAL_ENVIRONMENT;
+  }
+  if (location.hostname === 'vanilds.github.io') {
+    return PUBLIC_ENVIRONMENT;
+  }
+  return clusterEnvironment(location.origin);
 }

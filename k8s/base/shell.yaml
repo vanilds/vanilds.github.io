@@ -1,30 +1,56 @@
+# Shell: portfolio + resume + the demo host. Also deployed to GitHub Pages; the cluster copy lets the demo
+# run from one address (no CORS, same cookies) and is what the Ingress serves at "/".
 apiVersion: v1
 kind: Service
 metadata:
   name: shell
+  labels: { app: shell }
 spec:
   selector: { app: shell }
-  ports: [{ port: 80 }]
+  ports: [{ name: http, port: 80, targetPort: http }]
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: shell
+  labels: { app: shell }
 spec:
-  replicas: 2
+  replicas: 1             # static files from nginx: one small pod serves far more than this demo will see
+  revisionHistoryLimit: 3
+  strategy:
+    rollingUpdate: { maxSurge: 1, maxUnavailable: 0 }
   selector:
     matchLabels: { app: shell }
   template:
     metadata:
       labels: { app: shell }
     spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile: { type: RuntimeDefault }
       containers:
         - name: shell
-          image: creditdesk-shell:dev
+          image: creditdesk-shell:dev     # web/Dockerfile, --target shell
           imagePullPolicy: IfNotPresent
-          ports: [{ containerPort: 80 }]
+          ports: [{ name: http, containerPort: 8080 }]
+          lifecycle:
+            preStop:
+              sleep: { seconds: 3 }       # let the Ingress drop this pod before nginx stops
           readinessProbe:
-            httpGet: { path: /, port: 80 }
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 30
           resources:
-            requests: { cpu: 25m, memory: 32Mi }
+            requests: { cpu: 10m, memory: 16Mi }
             limits: { memory: 64Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }   # nginx temp files and pid (nginx-unprivileged writes them here)
+      volumes:
+        - name: tmp
+          emptyDir: { sizeLimit: 16Mi }

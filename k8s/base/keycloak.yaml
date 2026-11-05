@@ -1,33 +1,80 @@
-# Identity provider (stands in for Entra ID / corporate SSO). Dev mode only.
+# Identity provider (stands in for Entra ID / corporate SSO). Dev mode: in-memory database, the realm is
+# imported from the keycloak-realm ConfigMap at every start — the demo users and clients always come from git.
+# Served under /auth on the same address as everything else (see ingress.yaml).
 apiVersion: v1
 kind: Service
 metadata:
   name: keycloak
+  labels: { app: keycloak }
 spec:
   selector: { app: keycloak }
-  ports: [{ port: 8080 }]
+  ports: [{ name: http, port: 8080 }]
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: keycloak
+  labels: { app: keycloak }
 spec:
   replicas: 1
+  strategy:
+    type: Recreate          # in-memory state: two pods side by side would be two different identity providers
   selector:
     matchLabels: { app: keycloak }
   template:
     metadata:
       labels: { app: keycloak }
     spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile: { type: RuntimeDefault }
       containers:
         - name: keycloak
           image: quay.io/keycloak/keycloak:26.0
-          args: ["start-dev", "--http-relative-path=/auth", "--proxy-headers=xforwarded"]
-          ports: [{ containerPort: 8080 }]
+          args:
+            - start-dev
+            - --import-realm
+            - --http-relative-path=/auth
+            # Fixed public address: tokens say iss=$(PUBLIC_URL)/auth/realms/creditdesk no matter how Keycloak was
+            # reached (browser through the Ingress, API through keycloak:8080). The API checks exactly this value.
+            - --hostname=$(PUBLIC_URL)/auth
+            - --proxy-headers=xforwarded
+            - --health-enabled=true          # /auth/health/* on the management port 9000, not on the public one
+          ports:
+            - { name: http, containerPort: 8080 }
+            - { name: management, containerPort: 9000 }
           env:
+            - name: PUBLIC_URL
+              valueFrom: { configMapKeyRef: { name: creditdesk-config, key: PUBLIC_URL } }
+            # Placeholder in the realm file: the cluster's own address becomes a valid login redirect
+            - name: CREDITDESK_PUBLIC_URL
+              value: $(PUBLIC_URL)
             - { name: KC_BOOTSTRAP_ADMIN_USERNAME, value: admin }
             - name: KC_BOOTSTRAP_ADMIN_PASSWORD
               valueFrom: { secretKeyRef: { name: creditdesk-secrets, key: KEYCLOAK_ADMIN_PASSWORD } }
+            - name: JAVA_OPTS_KC_HEAP          # heap from the container limit, like the API
+              value: "-XX:MaxRAMPercentage=65"
+          # Startup: up to 3 min to boot and import the realm (2 slow vCPUs). Until it passes, liveness is off,
+          # so a slow first start is never killed half-way — the reason to prefer it over initialDelaySeconds.
+          startupProbe:
+            httpGet: { path: /auth/health/started, port: management }
+            periodSeconds: 5
+            failureThreshold: 36
+          readinessProbe:
+            httpGet: { path: /auth/health/ready, port: management }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /auth/health/live, port: management }
+            periodSeconds: 20
+            failureThreshold: 3
           resources:
             requests: { cpu: 200m, memory: 512Mi }
             limits: { memory: 1Gi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+          volumeMounts:
+            - { name: realm, mountPath: /opt/keycloak/data/import, readOnly: true }
+      volumes:
+        - name: realm
+          configMap: { name: keycloak-realm }

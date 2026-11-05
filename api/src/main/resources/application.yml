@@ -97,6 +97,9 @@ springdoc:
 
 server:
   shutdown: graceful               # finish in-flight requests when the pod is terminated
+  # Behind the Ingress the API sees http://api:8080. Trust X-Forwarded-Proto/Host from private-network proxies
+  # (Tomcat RemoteIpValve), so Location headers and problem "instance" URLs carry the browser's https address.
+  forward-headers-strategy: native
 
 logging:
   pattern:

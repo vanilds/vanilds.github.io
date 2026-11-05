@@ -11,7 +11,7 @@ export const appConfig: ApplicationConfig = {
       withComponentInputBinding(), // route params and ?query → component inputs, in the shell and in the remotes
       withInMemoryScrolling({ anchorScrolling: 'enabled', scrollPositionRestoration: 'enabled' }),
     ),
-    // localhost → docker compose stack; vanilds.github.io → public demo on the cluster
-    provideCreditDeskAuth(environmentFor(window.location.hostname)),
+    // dev servers → docker compose; vanilds.github.io → public demo; a cluster serving the shell → same origin
+    provideCreditDeskAuth(environmentFor(window.location)),
   ],
 };

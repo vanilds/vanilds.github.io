@@ -1,6 +1,7 @@
 # Keycloak realm `creditdesk`
 
-Imported at startup by `docker compose` (`--import-realm`); in Kubernetes it will be a ConfigMap (Phase 5).
+Imported at startup by `docker compose` (`--import-realm`); in Kubernetes it is the ConfigMap `keycloak-realm`,
+generated from this same file by `kustomization.yaml` next to it (one source of truth for both).
 
 | User | Password | Role | Can do |
 |---|---|---|---|
@@ -15,7 +16,10 @@ realm settings, login rate limiting and no password grant.
 ## Clients
 
 - `creditdesk-web` — public client for the Angular apps: Authorization Code + **PKCE (S256)**, no secret
-  (a browser cannot keep one), redirect only to `localhost:4200-4202` (shell + each micro frontend run alone) and `vanilds.github.io`.
+  (a browser cannot keep one), redirect only to `localhost:4200-4202` (shell + each micro frontend run alone),
+  `vanilds.github.io`, and the cluster's own address. That last one is `${CREDITDESK_PUBLIC_URL:http://localhost:8088}`:
+  Keycloak replaces placeholders from environment variables when it imports a realm, so the Codespaces URL
+  (different for every codespace) or `https://creditdesk.duckdns.org` comes from the pod, not from this file.
 - `creditdesk-cli` — password grant ("direct access"), only so you can call the API from `api/requests.http`
   or curl while developing. OAuth 2.1 removes this grant; it never leaves local development.
 

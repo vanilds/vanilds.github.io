@@ -1,0 +1,25 @@
+# Traefik in kind (Helm chart traefik/traefik). k3s on EC2 ships its own Traefik; Phase 6 configures that one.
+deployment:
+  replicas: 1
+service:
+  type: ClusterIP           # kind has no cloud load balancer; traffic enters through the hostPort below
+ports:
+  web:
+    hostPort: 80            # node port 80 → kind-config.yaml maps it to 127.0.0.1:8088
+    # Codespaces terminates HTTPS in front of the cluster and says so in X-Forwarded-Proto / X-Forwarded-Host.
+    # Trusting them is safe ONLY here, where the single way in is that proxy (port bound to loopback). On EC2
+    # Traefik is the edge itself, so Phase 6 keeps the default (ignore client-supplied forwarded headers).
+    forwardedHeaders:
+      insecure: true
+  websecure:
+    expose:
+      default: false        # no TLS locally
+ingressClass:
+  enabled: true
+  isDefaultClass: true
+  name: traefik             # the class k8s/base/ingress.yaml asks for (same name as k3s's built-in Traefik)
+accessLog:
+  enabled: true             # one line per request: `kubectl -n traefik logs deploy/traefik`
+resources:
+  requests: { cpu: 50m, memory: 64Mi }
+  limits: { memory: 192Mi }

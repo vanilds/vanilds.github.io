@@ -28,7 +28,7 @@ overview = f"""flowchart LR
     subgraph aws["AWS · us-east-1 · on when needed"]
         subgraph ec2["EC2 t4g.medium · k3s"]
             remotes["mfe-customers · mfe-proposals<br/>{m('Native Federation remotes')}"]:::app
-            backend["api · ai-worker · Keycloak<br/>{m('Postgres · RabbitMQ · Redis')}"]:::app
+            backend["api · ai-worker · Keycloak<br/>{m('Postgres · RabbitMQ')}"]:::app
         end
         s3[("Amazon S3<br/>{m('documents · backups')}")]:::data
     end
@@ -58,9 +58,9 @@ infra = f"""flowchart TB
         subgraph vpc["DEFAULT VPC · public subnet"]
             sgp{{{{"Security Group<br/>{m('in 80/443 · no SSH')}"}}}}:::sec
             subgraph ec2["EC2 t4g.medium · arm64 · 4 GB + 2 GB swap · gp3 30 GB"]
-                ingress["Ingress NGINX<br/>{m('cert-manager · Let’s Encrypt')}"]:::host
+                ingress["Traefik Ingress<br/>{m('cert-manager · Let’s Encrypt')}"]:::host
                 apps["creditdesk namespace<br/>{m('mfe-* · api · ai-worker · keycloak')}"]:::app
-                data[("Postgres · RabbitMQ · Redis<br/>{m('StatefulSets · local-path PVC')}")]:::data
+                data[("Postgres · RabbitMQ<br/>{m('StatefulSets · local-path PVC')}")]:::data
                 ops["Argo CD · Prometheus · Grafana<br/>{m('CronJob pg_dump → S3')}"]:::app
             end
         end
@@ -83,15 +83,15 @@ cluster = f"""flowchart LR
     shell["<b>shell</b><br/>{m('GitHub Pages')}"]:::host
 
     subgraph k8s["k3s · namespace creditdesk"]
-        ing["Ingress NGINX<br/>{m('TLS')}"]:::host
+        ing["Traefik Ingress<br/>{m('one address · TLS')}"]:::host
         mfec["mfe-customers<br/>{m('customer CRUD')}"]:::app
         mfep["mfe-proposals<br/>{m('workflow · AI opinion')}"]:::app
         kc["Keycloak<br/>{m('OIDC · roles')}"]:::sec
-        api["api<br/>{m('Spring Boot 3 · Java 21')}"]:::app
+        api["api<br/>{m('Spring Boot 3 · Java 21 · HPA 1–3')}"]:::app
         worker["ai-worker<br/>{m('Python · LangGraph')}"]:::app
         mq[("RabbitMQ<br/>{m('proposals exchange')}")]:::data
         db[("PostgreSQL")]:::data
-        cache[("Redis<br/>{m('rate limit · cache')}")]:::data
+        keda["KEDA<br/>{m('0–3 pods by queue length')}"]:::sec
     end
 
     s3[("Amazon S3")]:::data
@@ -101,16 +101,17 @@ cluster = f"""flowchart LR
     shell -. "import map" .-> mfec
     shell -. "import map" .-> mfep
     user --> ing
-    ing --> mfec
-    ing --> mfep
+    ing -- "/mfe/*" --> mfec
+    ing -- "/mfe/*" --> mfep
     ing -- "/auth" --> kc
     ing -- "/api" --> api
     api -- "validate JWT" --> kc
     api --> db
-    api --> cache
     api -- "presigned URLs" --> s3
     api -- "proposal.submitted" --> mq
     mq --> worker
+    keda -. "scales" .-> worker
+    keda -. "reads queue" .-> mq
     worker --> llm
     worker -- "opinion" --> api
 {CLASSES}

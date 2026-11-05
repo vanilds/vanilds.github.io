@@ -1,3 +1,4 @@
+# CreditDesk API (Spring Boot). Stateless: any pod can answer any request, so the HPA adds pods under CPU load.
 apiVersion: v1
 kind: Service
 metadata:
@@ -11,8 +12,13 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: api
+  labels: { app: api }
 spec:
-  replicas: 2
+  # No "replicas" here on purpose: the HPA below owns that number. With both, every `kubectl apply` (or Argo CD
+  # sync) would reset the count the HPA chose.
+  revisionHistoryLimit: 3
+  strategy:
+    rollingUpdate: { maxSurge: 1, maxUnavailable: 0 }   # a new pod must be Ready before an old one goes
   selector:
     matchLabels: { app: api }
   template:
@@ -23,34 +29,78 @@ spec:
         prometheus.io/path: /actuator/prometheus
         prometheus.io/port: "8080"
     spec:
+      # Graceful shutdown, in order: preStop waits 5 s (the Ingress stops sending new requests), then SIGTERM →
+      # Spring finishes in-flight requests (server.shutdown=graceful, up to 30 s) → exit. 45 s covers it all.
+      terminationGracePeriodSeconds: 45
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile: { type: RuntimeDefault }
       containers:
         - name: api
           image: creditdesk-api:dev
           imagePullPolicy: IfNotPresent
-          ports: [{ containerPort: 8080 }]
+          ports: [{ name: http, containerPort: 8080 }]
           envFrom:
             - configMapRef: { name: creditdesk-config }
             - secretRef: { name: creditdesk-secrets }
+          env:
+            # $(VAR) expands variables defined above (envFrom included): one PUBLIC_URL, every address derived
+            - name: OIDC_ISSUER_URI
+              value: $(PUBLIC_URL)/auth/realms/creditdesk
+            # The cluster serves the shell itself (same origin, no CORS needed); GitHub Pages is another origin
+            - name: CORS_ALLOWED_ORIGINS
+              value: https://vanilds.github.io,$(PUBLIC_URL)
+          lifecycle:
+            preStop:
+              sleep: { seconds: 5 }
+          # Startup: Flyway migrations + Spring context on 2 slow vCPUs can take a minute or two. Liveness only
+          # starts after this passes, so a slow boot is not mistaken for a hung process (the classic crash loop).
+          startupProbe:
+            httpGet: { path: /actuator/health/liveness, port: http }
+            periodSeconds: 5
+            failureThreshold: 36          # up to 3 minutes
+          # Readiness = may receive traffic. During shutdown Spring flips it to OUT_OF_SERVICE first.
           readinessProbe:
-            httpGet: { path: /actuator/health/readiness, port: 8080 }
-            initialDelaySeconds: 20
+            httpGet: { path: /actuator/health/readiness, port: http }
+            periodSeconds: 10
+          # Liveness = the process is not stuck. Deliberately does NOT check Postgres or RabbitMQ: if the database
+          # is down, restarting every API pod fixes nothing and only adds a restart storm.
           livenessProbe:
-            httpGet: { path: /actuator/health/liveness, port: 8080 }
-            initialDelaySeconds: 40
+            httpGet: { path: /actuator/health/liveness, port: http }
+            periodSeconds: 20
+            failureThreshold: 3
+          # Requests = what the scheduler reserves (and the 100% of the HPA's CPU percentage).
+          # No CPU limit on purpose: a limit throttles the JVM even when the node is idle (slow GC, slow
+          # startup); the memory limit is what protects the node, and the heap is sized from it (Dockerfile).
           resources:
-            requests: { cpu: 200m, memory: 384Mi }
+            requests: { cpu: 250m, memory: 512Mi }
             limits: { memory: 768Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }   # Tomcat work files: the only place the API writes to disk
+      volumes:
+        - name: tmp
+          emptyDir: { sizeLimit: 64Mi }
 ---
+# Scale on CPU between 1 and 3 pods. CPU is a fair signal for this API: requests are short and synchronous,
+# the slow work (AI opinion) is already queued for the worker.
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
   name: api
+  labels: { app: api }
 spec:
   scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: api }
-  minReplicas: 2
-  maxReplicas: 5
+  minReplicas: 1
+  maxReplicas: 3
   metrics:
     - type: Resource
       resource:
         name: cpu
         target: { type: Utilization, averageUtilization: 70 }
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300   # wait 5 min of low load before removing a pod (no flapping)

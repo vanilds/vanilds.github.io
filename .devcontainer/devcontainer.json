@@ -1,6 +1,6 @@
 // One-click dev environment for GitHub Codespaces (Code → Codespaces → Create codespace on main).
-// Everything runs in the cloud: Java 21, Maven (via ./mvnw), Node 22 for the Angular apps, and Docker for the
-// database, Keycloak and Testcontainers.
+// Everything runs in the cloud: Java 21, Maven (via ./mvnw), Node 22 for the Angular apps, Docker for the
+// database, Keycloak and Testcontainers, and kind + kubectl + Helm for the local Kubernetes cluster (k8s/local).
 {
   "name": "CreditDesk",
   "image": "mcr.microsoft.com/devcontainers/java:1-21-bookworm",
@@ -8,14 +8,18 @@
     // Docker inside the codespace: `docker compose up` and Testcontainers both need it
     "ghcr.io/devcontainers/features/docker-in-docker:2": {},
     // Angular CLI for the shell and the micro frontends (web/)
-    "ghcr.io/devcontainers/features/node:1": { "version": "22" }
+    "ghcr.io/devcontainers/features/node:1": { "version": "22" },
+    // kubectl + Helm for the cluster (minikube not needed: kind runs the cluster inside Docker)
+    "ghcr.io/devcontainers/features/kubectl-helm-minikube:1": { "minikube": "none" },
+    "ghcr.io/devcontainers-extra/features/kind:1": {}
   },
-  // The 2-core machine (8 GB) is enough and uses the free monthly quota at half the rate of the 4-core one
+  // The 2-core machine (8 GB) is enough and uses the free monthly quota at half the rate of the 4-core one.
+  // Run either docker compose or the kind cluster, not both at once: together they do not fit in 8 GB.
   "hostRequirements": {
     "cpus": 2,
     "memory": "8gb"
   },
-  "forwardPorts": [4200, 4201, 4202, 8080, 8180, 5432, 15672, 8333, 8000],
+  "forwardPorts": [4200, 4201, 4202, 8080, 8180, 5432, 15672, 8333, 8000, 8088],
   "portsAttributes": {
     "4200": { "label": "Shell (portfolio + demo)", "onAutoForward": "openBrowser" },
     "4201": { "label": "mfe-customers", "onAutoForward": "silent" },
@@ -25,7 +29,8 @@
     "5432": { "label": "PostgreSQL", "onAutoForward": "silent" },
     "15672": { "label": "RabbitMQ management", "onAutoForward": "silent" },
     "8333": { "label": "Local S3 (presigned uploads)", "onAutoForward": "silent" },
-    "8000": { "label": "AI worker health/metrics", "onAutoForward": "silent" }
+    "8000": { "label": "AI worker health/metrics", "onAutoForward": "silent" },
+    "8088": { "label": "Kubernetes (kind) — whole demo", "onAutoForward": "notify" }
   },
   // Download Maven and npm dependencies once, when the codespace is created
   "postCreateCommand": "(cd api && ./mvnw -B -q dependency:go-offline) && (cd web && npm ci)",

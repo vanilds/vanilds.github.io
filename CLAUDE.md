@@ -14,14 +14,14 @@ Read this first in any new session. It records decisions and the current state s
 - API: Java 21, Spring Boot 3, Spring Security (JWT resource server), JPA, Flyway, RFC 9457 errors, OpenAPI contract in `api/openapi.yaml`, Testcontainers.
 - Auth: Keycloak (roles `ANALYST`, `MANAGER`, `AUDITOR`).
 - Async: RabbitMQ + transactional outbox; Python 3.12 **LangGraph** worker drafts the AI credit opinion from masked data.
-- Data: PostgreSQL 16, Redis 7 (rate limit for public demo login). Documents in **Amazon S3** via presigned URLs (SeaweedFS stands in locally — MinIO no longer publishes free images).
-- Infra: **k3s on one EC2 t4g.medium (arm64)** in us-east-1, Ingress NGINX + cert-manager, Argo CD later. No Elastic IP — DuckDNS (`creditdesk.duckdns.org`) updated at every boot. No SSH (SSM Session Manager only). No static AWS keys anywhere.
+- Data: PostgreSQL 16 (Redis dropped in Phase 5: nothing used it; login rate limiting = Keycloak brute-force detection). Documents in **Amazon S3** via presigned URLs (SeaweedFS stands in locally — MinIO no longer publishes free images).
+- Infra: **k3s on one EC2 t4g.medium (arm64)** in us-east-1, Traefik (k3s built-in; Ingress NGINX was retired in March 2026) + cert-manager, Argo CD later. No Elastic IP — DuckDNS (`creditdesk.duckdns.org`) updated at every boot. No SSH (SSM Session Manager only). No static AWS keys anywhere.
 - Cost: paid by a US$100 promotional credit (expires 2027-06-30). EC2 runs only weekdays 08:00–20:00 São Paulo via `.github/workflows/ec2-schedule.yml`.
 - Dev environment: the user's Mac is old — everything runs in **GitHub Codespaces** (needs a `.devcontainer`) or on AWS. Keep images multi-arch (arm64 + amd64).
 - Repo docs and code in English; conversation with the user in Portuguese.
 - Diagrams follow the user's LinkedIn carousel look (navy grid, orange mono kicker, heavy white title). Sources in `docs/diagrams/src/` (`specs.py` + `render.mjs`, Mermaid + Puppeteer).
 
-## Current state (2026-11-05, Phase 4)
+## Current state (2026-11-05, Phase 5)
 
 Done:
 - Repo created; README with architecture, domain model, flows and branded diagrams.
@@ -43,6 +43,9 @@ Done:
 - **Phase 4 done** (branch `phase-4-events`): API `messaging/` (Topology: exchange `creditdesk.events` topic, `creditdesk.retry` and `creditdesk.dead-letter` direct; per consumer queue Q → `Q.retry` (TTL, back to Q via default exchange) → `Q.dlq`; `Outbox` written in the submit transaction, `OutboxRelay` SKIP LOCKED + correlated publisher confirms + mandatory, gauge `creditdesk.outbox.pending`, purge after 7 days; `Inbox` table `processed_message`; `FailedMessages` counts `x-death`). Event `proposal.submitted` (`ProposalSubmitted`, no PII, `proposalVersion`, document categories). `proposal/opinion/`: listener on `api.opinion-drafted`, poison → DLQ, `startAnalysisAfterOpinion` only if still SUBMITTED at that version, actor `system:ai-worker`, `GET /opinions` with `current`. `proposal/document/`: presigned PUT (type+length signed) → HEAD confirm → AVAILABLE, audited `POST …/download`, PDF/JPEG/PNG ≤ 10 MB, ≤ 10 per proposal, key `proposals/{id}/{docId}`. Migration V7. `ai-worker/`: Python 3.12, LangGraph graph assess → facts → write ⇄ guardrails → template; rules decide, LLM (optional, OpenAI-compatible) only writes; aio-pika robust consumer, ack after confirmed publish, opinion id = uuid5(submission id), retry/DLQ, `/health` + `/metrics` on 8000. Front: `mfe-proposals` detail has AI opinion panel (polls every 3 s while SUBMITTED) and documents panel (sign → PUT → confirm). compose: rabbitmq 4.1, seaweedfs 4.50, ai-worker. CI `.github/workflows/ai-worker.yml`. 118 API tests, 37 worker tests, 24 front tests. Verified end to end: browser upload + submit → opinion in ~1 s → IN_ANALYSIS; submit with RabbitMQ stopped → event waits in the outbox and goes out on restart.
 - Gotcha: MinIO images are gone from Docker Hub and quay.io; SeaweedFS (`chrislusf/seaweedfs`, `-s3`, identities in `infra/seaweedfs/s3.json`) works with SDK v2 presigning (checksums `WHEN_REQUIRED`, path style).
 - Gotcha: RabbitMQ refuses to redeclare a queue with other arguments. Only the main queues have fixed arguments and are declared by both sides; each consumer declares its own `.retry` (its TTL). Changing a retry delay: the worker recreates its retry queue if empty (else keeps it); the API's `RabbitAdmin` ignores declaration errors and keeps the old queue (delete `api.opinion-drafted.retry` when empty to apply).
+- **Phase 5 done** (branch `phase-5-k8s`): kind cluster via `k8s/local/up.sh` (pinned charts: Traefik 42.3.0, KEDA 2.21.0, metrics-server 3.14.0; node `kindest/node:v1.34.0`; host port 8088 on loopback), `smoke.sh` (end to end through the Ingress only), `down.sh`. One `PUBLIC_URL` (configMapGenerator; up.sh writes git-ignored `overlays/local/local.env` + random `secrets.env`) → issuer, Keycloak `--hostname=$(PUBLIC_URL)/auth`, CORS, `S3_PUBLIC_ENDPOINT`, realm redirect placeholder `${CREDITDESK_PUBLIC_URL}`. Ingress: Traefik, paths unchanged, `/creditdesk-documents` → SeaweedFS (presigned path-style). Probes startup/readiness/liveness (liveness never checks dependencies), no CPU limits on JVMs, non-root numeric uids, read-only root + `/tmp` emptyDir, preStop sleeps. API HPA 1–3 on CPU; worker KEDA ScaledObject 0–3 on `ai-worker.proposal-submitted` (5 msgs/pod, cooldown 120 s). Spring profile `demo` = seed only; `server.forward-headers-strategy: native`. `web/Dockerfile` (one build, targets shell / mfe-customers / mfe-proposals on nginx-unprivileged 8080, `/healthz`). Front: `environmentFor(location)` → cluster serving the shell uses its own origin. CI `.github/workflows/k8s.yml` (kubeconform + kind e2e). Diagrams re-rendered (Traefik, KEDA, no Redis).
+- Gotcha (sandbox): kind cannot start here (nested runc fails, cgroup v1) and downloading k3s was refused. Phase 5 was verified with the same images, settings and security flags in plain Docker behind a Traefik stand-in (`smoke.sh` minus the kubectl checks), both with `http://localhost:8088` and an https Codespaces-style URL; the real kind run is the CI job. Front images there were built from host `dist/` (npm ci fails inside builds here).
+- TODO Phase 6: `infra/aws/user-data.sh` still installs ingress-nginx and disables Traefik — switch to k3s's Traefik to match `k8s/base/ingress.yaml`.
 - Gotcha: a compose service whose port bind failed once may come back without published ports — `docker compose up -d --force-recreate <service>`.
 
 ## Roadmap
@@ -51,8 +54,8 @@ Done:
 2. Phase 2 — Keycloak, roles, workflow transitions, optimistic locking (`ETag`/`If-Match`), audit log, document encryption (done).
 3. Phase 3 — shell (portfolio + resume) on GitHub Pages + two micro frontends (done).
 4. Phase 4 — outbox → RabbitMQ, DLQ, LangGraph worker, presigned S3 uploads (done).
-5. **Phase 5** ← next — kind locally (Codespaces): ingress, probes, limits, HPA (KEDA on queue length for the worker), `S3_PUBLIC_ENDPOINT` through the Ingress, images for api/worker/front.
-6. Phase 6 — deploy to EC2: GHCR multi-arch images, `k8s/overlays/aws`, TLS, Argo CD, SSM secrets.
+5. Phase 5 (done) — kind locally (Codespaces): ingress, probes, limits, HPA (KEDA on queue length for the worker), `S3_PUBLIC_ENDPOINT` through the Ingress, images for api/worker/front.
+6. **Phase 6** ← next — deploy to EC2: GHCR multi-arch images, `k8s/overlays/aws`, TLS, Argo CD, SSM secrets.
 7. Phase 7 — Prometheus/Grafana, tracing by correlation-id, daily `pg_dump` to S3 + restore test, incident drills in `docs/`.
 
 ## Working agreements

@@ -1,0 +1,9 @@
+# The realm as a ConfigMap for Kubernetes, generated from the same JSON that docker compose mounts.
+# Included by k8s/base. The generator adds a hash of the content to the name, so editing the realm changes the
+# ConfigMap name in the Keycloak Deployment and Kubernetes rolls out a new pod with the new realm.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+configMapGenerator:
+  - name: keycloak-realm
+    files:
+      - creditdesk-realm.json

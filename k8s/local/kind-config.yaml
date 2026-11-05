@@ -1,0 +1,18 @@
+# kind = Kubernetes in Docker: a real cluster whose "node" is a container. One node is enough for the demo and
+# fits a 2-core / 8 GB codespace. Created by up.sh; `kind delete cluster --name creditdesk` throws it away.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: creditdesk
+nodes:
+  - role: control-plane
+    # Pinned like the Helm charts in up.sh: each kind release defaults to a different Kubernetes. 1.34 is the
+    # version the manifests are validated against (kubeconform in .github/workflows/k8s.yml).
+    image: kindest/node:v1.34.0
+    extraPortMappings:
+      # Port 80 of the node (Traefik listens there with a hostPort) → port 8088 of the codespace / your machine.
+      # Codespaces forwards 8088 to https://<codespace>-8088.app.github.dev. Loopback only: nothing else on the
+      # network can reach the cluster.
+      - containerPort: 80
+        hostPort: 8088
+        listenAddress: 127.0.0.1
+        protocol: TCP
