@@ -1,0 +1,59 @@
+name: API
+
+# Runs on every change to the API: unit tests, integration tests against a real PostgreSQL (Testcontainers),
+# the OpenAPI contract check and a Docker build. Required to pass before merging to main.
+
+on:
+  push:
+    branches: [main]
+    paths: ["api/**", ".github/workflows/api.yml"]
+  pull_request:
+    paths: ["api/**", ".github/workflows/api.yml"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: api-${{ github.ref }}
+  cancel-in-progress: true   # a new push makes the previous run of the same branch pointless
+
+defaults:
+  run:
+    working-directory: api
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      - name: Unit and integration tests
+        run: ./mvnw -B verify
+
+      # The tests regenerate api/openapi.yaml from the code. If it changed, the committed contract is stale:
+      # the front-ends would generate clients from an API that no longer exists.
+      - name: OpenAPI contract is up to date
+        run: |
+          if ! git diff --exit-code -- openapi.yaml; then
+            echo "::error file=api/openapi.yaml::Contract is outdated. Run ./mvnw verify in api/ and commit openapi.yaml."
+            exit 1
+          fi
+
+      - name: Test reports
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: |
+            api/target/surefire-reports
+            api/target/failsafe-reports
+
+      - name: Docker image builds
+        run: docker build -t creditdesk-api:ci .

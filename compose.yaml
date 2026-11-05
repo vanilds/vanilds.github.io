@@ -1,0 +1,38 @@
+# Local stack for development: `docker compose up --build`
+# API on http://localhost:8080 (Swagger UI: /swagger-ui.html), PostgreSQL on localhost:5432.
+# Grows phase by phase (Keycloak, RabbitMQ, MinIO, worker); Kubernetes manifests live in k8s/.
+name: creditdesk
+
+services:
+  postgres:
+    image: public.ecr.aws/docker/library/postgres:16-alpine
+    environment:
+      POSTGRES_DB: creditdesk
+      POSTGRES_USER: creditdesk
+      POSTGRES_PASSWORD: creditdesk   # local only
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U creditdesk -d creditdesk"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build: ./api
+    environment:
+      SPRING_PROFILES_ACTIVE: dev     # loads the synthetic demo data
+      DB_HOST: postgres
+      DB_NAME: creditdesk
+      DB_USER: creditdesk
+      DB_PASSWORD: creditdesk
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy    # wait until Postgres accepts connections, not just until it starts
+
+volumes:
+  pgdata:

@@ -1,0 +1,109 @@
+### CreditDesk API — manual requests
+### Open in VS Code / Codespaces with the "REST Client" extension and click "Send Request" above each block.
+### Start the stack first: `docker compose up --build` (repository root).
+
+@base = http://localhost:8080
+
+### Search customers (CPF comes back masked)
+GET {{base}}/api/customers?size=20
+
+### Search by part of the name, case-insensitive
+GET {{base}}/api/customers?name=silva
+
+### Register an individual (PF) — the CPF below is a generated test number
+# @name newCustomer
+POST {{base}}/api/customers
+Content-Type: application/json
+
+{
+  "type": "PF",
+  "document": "529.982.247-25",
+  "name": "Maria da Silva",
+  "email": "maria.silva@example.com",
+  "monthlyRevenue": 8500.00
+}
+
+### Same document again → 409 duplicate-document
+POST {{base}}/api/customers
+Content-Type: application/json
+
+{
+  "type": "PF",
+  "document": "52998224725",
+  "name": "Maria Duplicada",
+  "email": "dup@example.com",
+  "monthlyRevenue": 100
+}
+
+### Invalid CPF → 400 with the field error
+POST {{base}}/api/customers
+Content-Type: application/json
+
+{
+  "type": "PF",
+  "document": "529.982.247-24",
+  "name": "Check Digit Wrong",
+  "email": "x@example.com",
+  "monthlyRevenue": 100
+}
+
+### Company (PJ) with the new alphanumeric CNPJ (Receita Federal's example)
+POST {{base}}/api/customers
+Content-Type: application/json
+
+{
+  "type": "PJ",
+  "document": "12.ABC.345/01DE-35",
+  "name": "Exemplo Alfanumérico Ltda",
+  "email": "financeiro@example.com",
+  "monthlyRevenue": 320000
+}
+
+### Update the customer created above
+PUT {{base}}/api/customers/{{newCustomer.response.body.id}}
+Content-Type: application/json
+
+{
+  "name": "Maria da Silva Souza",
+  "email": "maria.souza@example.com",
+  "monthlyRevenue": 9200.00
+}
+
+### Create a proposal (always DRAFT) — response includes the Tabela Price installment
+# @name newProposal
+POST {{base}}/api/proposals
+Content-Type: application/json
+
+{
+  "customerId": "{{newCustomer.response.body.id}}",
+  "kind": "NEW_CREDIT",
+  "amount": 15000.00,
+  "installments": 24,
+  "monthlyRate": 0.0199
+}
+
+### Edit the draft
+PUT {{base}}/api/proposals/{{newProposal.response.body.id}}
+Content-Type: application/json
+
+{
+  "kind": "NEW_CREDIT",
+  "amount": 18000.00,
+  "installments": 36,
+  "monthlyRate": 0.0189
+}
+
+### Delete a customer with an open proposal → 422
+DELETE {{base}}/api/customers/{{newCustomer.response.body.id}}
+
+### Proposals of the last 30 days (default), newest first
+GET {{base}}/api/proposals
+
+### Filter by status and period (max 90 days)
+GET {{base}}/api/proposals?status=APPROVED&from=2026-09-01&to=2026-11-04&size=50
+
+### Period longer than 90 days → 400 invalid-period
+GET {{base}}/api/proposals?from=2026-01-01&to=2026-11-04
+
+### Health probes used by Kubernetes
+GET {{base}}/actuator/health/readiness
