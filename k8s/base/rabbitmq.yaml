@@ -10,6 +10,7 @@ spec:
   ports:
     - { name: amqp, port: 5672 }
     - { name: management, port: 15672 }   # UI and HTTP API; not in the Ingress (kubectl port-forward to look)
+    - { name: metrics, port: 15692 }      # rabbitmq_prometheus (on by default in the image); scraped in Phase 7
 ---
 apiVersion: apps/v1
 kind: StatefulSet
@@ -34,11 +35,16 @@ spec:
           ports:
             - { name: amqp, containerPort: 5672 }
             - { name: management, containerPort: 15672 }
+            - { name: metrics, containerPort: 15692 }
           env:
             - name: RABBITMQ_DEFAULT_USER
               valueFrom: { secretKeyRef: { name: creditdesk-secrets, key: RABBITMQ_USER } }
             - name: RABBITMQ_DEFAULT_PASS
               valueFrom: { secretKeyRef: { name: creditdesk-secrets, key: RABBITMQ_PASSWORD } }
+            # Erlang schedulers spin ("busy wait") before sleeping, to shave microseconds off latency. Idle, that
+            # showed up as ~160m of CPU on the 2-vCPU node (Phase 7, kubectl top). A demo broker does not need it.
+            - name: RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS
+              value: "+sbwt none +sbwtdcpu none +sbwtdio none"
           # Probes as RabbitMQ's own docs recommend: "ping" for liveness (the node runs), "check_port_connectivity"
           # for readiness (it accepts AMQP connections). Neither looks at queues or the cluster: a slow broker
           # must not be killed, that would drop every client connection at once.

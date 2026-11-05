@@ -1,0 +1,12 @@
+# When the node runs out of memory, the kubelet evicts pods to save itself. It picks pods that use more than they
+# requested, and among those the lowest priority first. Monitoring gets a priority BELOW the default (0) of every
+# CreditDesk pod: if something has to go, it is Prometheus or Grafana, never the API or the database.
+# Losing a few hours of graphs is a far smaller incident than losing the demo.
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: creditdesk-observability
+value: -100
+globalDefault: false
+preemptionPolicy: Never       # it never pushes another pod out to get scheduled either
+description: Monitoring is evicted before the application under memory pressure.

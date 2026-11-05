@@ -1,0 +1,40 @@
+# Monitoring (Phase 7): Prometheus + Grafana, inside the cluster, sized for what is left on a 4 GB node.
+# One Application, three sources:
+#   1. Prometheus chart  — values in k8s/monitoring/prometheus-values.yaml (scrape jobs, alert rules, retention)
+#   2. Grafana chart     — values in k8s/monitoring/grafana-values.yaml (datasource, dashboard folders)
+#   3. k8s/monitoring    — the objects around them: PriorityClass, Grafana admin secret (SSM), dashboards
+# The third source is also the "$values" reference the charts read their values from, so a change to a rule,
+# a dashboard or a limit is one commit, and Argo CD applies it.
+#
+# Neither UI is on the Internet: port-forward through SSM, like the Argo CD UI (docs/operations.md).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: monitoring
+  namespace: argocd
+spec:
+  project: default
+  sources:
+    - repoURL: https://prometheus-community.github.io/helm-charts
+      chart: prometheus
+      targetRevision: 29.40.3            # Prometheus v3.15
+      helm:
+        releaseName: prometheus
+        valueFiles: [$values/k8s/monitoring/prometheus-values.yaml]
+    - repoURL: https://grafana-community.github.io/helm-charts   # the chart moved here from grafana/helm-charts
+      chart: grafana
+      targetRevision: 14.3.1             # Grafana 13.3
+      helm:
+        releaseName: grafana
+        valueFiles: [$values/k8s/monitoring/grafana-values.yaml]
+    - repoURL: https://github.com/vanilds/vanilds.github.io.git
+      targetRevision: main
+      path: k8s/monitoring
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+  syncPolicy:
+    automated: { prune: true, selfHeal: true }
+    syncOptions: [CreateNamespace=true, ServerSideApply=true]
+    retry: { limit: -1, backoff: { duration: 30s, factor: 2, maxDuration: 5m } }
