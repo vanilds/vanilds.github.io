@@ -14,7 +14,14 @@
 alertmanager: { enabled: false }
 prometheus-pushgateway: { enabled: false }
 
+# ── PAUSED (2026-11-05) ─────────────────────────────────────────────────────────────────────────────────────────
+# The first deploy took the node down: memory ran out, the kubelet stopped answering (NodeNotReady), API and
+# Keycloak went 503. Monitoring is switched off until it is re-sized and re-enabled on purpose
+# (docs/incidents/README.md, drill log). To turn it back on: remove every line marked PAUSED (here and in
+# grafana-values.yaml).
+
 server:
+  replicaCount: 0                # PAUSED, see above
   priorityClassName: creditdesk-observability
   global:
     scrape_interval: 30s
@@ -47,6 +54,7 @@ configmapReload:
       limits: { memory: 32Mi }
 
 kube-state-metrics:
+  enabled: false                 # PAUSED
   priorityClassName: creditdesk-observability
   # Only the objects the dashboards and alerts read: restarts, OOM kills, readiness, HPAs, backup jobs, disks
   collectors: [cronjobs, deployments, horizontalpodautoscalers, jobs, nodes, persistentvolumeclaims, pods, statefulsets]
@@ -55,6 +63,7 @@ kube-state-metrics:
     limits: { memory: 96Mi }
 
 prometheus-node-exporter:
+  enabled: false                 # PAUSED
   priorityClassName: creditdesk-observability
   resources:
     requests: { cpu: 10m, memory: 24Mi }

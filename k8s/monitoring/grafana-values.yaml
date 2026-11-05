@@ -1,6 +1,7 @@
 # Grafana: read-only view over Prometheus, dashboards from git. No plugins, no sidecars.
 # Opened through an SSM port forward (docs/operations.md); never exposed on the Internet.
 
+replicas: 0                          # PAUSED — see k8s/monitoring/prometheus-values.yaml
 priorityClassName: creditdesk-observability
 deploymentStrategy: { type: Recreate }
 testFramework: { enabled: false }
