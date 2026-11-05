@@ -12,7 +12,7 @@
           "token.actions.githubusercontent.com:aud": "sts.amazonaws.com"
         },
         "StringLike": {
-          "token.actions.githubusercontent.com:sub": "repo:vanilds/vanilds.github.io:ref:refs/heads/main"
+          "token.actions.githubusercontent.com:sub": "repo:vanilds@45978471/vanilds.github.io@1446370476:ref:refs/heads/main"
         }
       }
     }
