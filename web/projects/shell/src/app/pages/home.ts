@@ -1,7 +1,15 @@
 import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import { I18n } from '@creditdesk/shared';
-import { DEMO_USERS, EXPERIENCE, PROFILE, PROJECTS, SKILLS } from '../content';
+import {
+  DEMO_USERS,
+  EARLIER_EXPERIENCE,
+  EXPERIENCE,
+  PROFILE,
+  PROJECTS,
+  SKILLS,
+  WRITING,
+} from '../content';
 import { SiteHeader } from './site-header';
 
 @Component({
@@ -13,40 +21,76 @@ import { SiteHeader } from './site-header';
 
     <main>
       <section class="hero wrap">
-        <p class="kicker">
-          {{ i18n.t(profile.title) }} · {{ i18n.t({ en: 'Banking', pt: 'Setor financeiro' }) }}
-        </p>
-        <h1>{{ profile.name }}<span class="dot">.</span></h1>
-        <p class="lead">{{ i18n.t(profile.headline) }}</p>
-        <div class="cta">
-          <a class="btn btn-primary" routerLink="/demo"
-            >{{ i18n.t({ en: 'Open the CreditDesk demo', pt: 'Abrir a demo CreditDesk' }) }} →</a
-          >
-          <a class="btn" routerLink="/resume">{{ i18n.t({ en: 'Resume', pt: 'Currículo' }) }}</a>
-          <a class="btn btn-ghost" [href]="profile.links.linkedin" target="_blank" rel="noopener"
-            >LinkedIn ↗</a
-          >
+        <div class="hero-text">
+          <p class="kicker">{{ i18n.t(profile.title) }}</p>
+          <h1>{{ profile.name }}<span class="dot">.</span></h1>
+          <p class="tagline mono">{{ i18n.t(profile.tagline) }}</p>
+          <p class="lead">{{ i18n.t(profile.headline) }}</p>
+          <div class="cta">
+            <a class="btn btn-primary" routerLink="/demo"
+              >{{ i18n.t({ en: 'Open the CreditDesk demo', pt: 'Abrir a demo CreditDesk' }) }} →</a
+            >
+            <a class="btn" routerLink="/resume">{{ i18n.t({ en: 'Resume', pt: 'Currículo' }) }}</a>
+            <a class="btn btn-ghost" [href]="profile.links.linkedin" target="_blank" rel="noopener"
+              >LinkedIn ↗</a
+            >
+          </div>
         </div>
-        <ul class="stats" aria-label="Highlights">
+        <figure class="portrait">
+          <img
+            [src]="profile.photo"
+            width="480"
+            height="480"
+            [alt]="profile.fullName"
+            fetchpriority="high"
+          />
+        </figure>
+      </section>
+
+      <section class="wrap">
+        <ul class="stats" [attr.aria-label]="i18n.t({ en: 'Highlights', pt: 'Destaques' })">
+          <li>
+            <strong>8+</strong
+            ><span>{{ i18n.t({ en: 'years in technology', pt: 'anos em tecnologia' }) }}</span>
+          </li>
           <li>
             <strong>7+</strong
             ><span>{{ i18n.t({ en: 'years of front-end', pt: 'anos de front-end' }) }}</span>
           </li>
           <li>
             <strong>4</strong
-            ><span>{{ i18n.t({ en: 'Brazilian banks', pt: 'bancos brasileiros' }) }}</span>
+            ><span>{{
+              i18n.t({
+                en: 'banks: Bradesco, Itaú, Caixa, Santander',
+                pt: 'bancos: Bradesco, Itaú, Caixa, Santander',
+              })
+            }}</span>
           </li>
           <li>
             <strong>MFE</strong
             ><span>{{
-              i18n.t({ en: 'micro frontends in production', pt: 'micro frontends em produção' })
+              i18n.t({ en: 'micro frontends in production', pt: 'microfrontends em produção' })
             }}</span>
           </li>
         </ul>
       </section>
 
+      <section id="about" class="wrap section">
+        <p class="kicker">01 · {{ i18n.t({ en: 'About', pt: 'Sobre' }) }}</p>
+        <h2>
+          {{
+            i18n.t({
+              en: 'A front-end engineer who understands the back end',
+              pt: 'Front-end que entende o back-end',
+            })
+          }}
+        </h2>
+        <p class="body">{{ i18n.t(profile.summary) }}</p>
+        <p class="body looking">{{ i18n.t(profile.lookingFor) }}</p>
+      </section>
+
       <section id="work" class="wrap section">
-        <p class="kicker">01 · {{ i18n.t({ en: 'Experience', pt: 'Experiência' }) }}</p>
+        <p class="kicker">02 · {{ i18n.t({ en: 'Experience', pt: 'Experiência' }) }}</p>
         <h2>
           {{
             i18n.t({
@@ -58,7 +102,12 @@ import { SiteHeader } from './site-header';
         <ol class="timeline">
           @for (job of experience; track job.company) {
             <li>
-              <div class="when mono">{{ i18n.t(job.period) }}</div>
+              <div class="when mono">
+                {{ i18n.t(job.period) }}
+                @if (job.place) {
+                  <span class="place">{{ i18n.t(job.place) }}</span>
+                }
+              </div>
               <div>
                 <h3>
                   {{ job.company }}
@@ -72,14 +121,22 @@ import { SiteHeader } from './site-header';
                     <li>{{ i18n.t(p) }}</li>
                   }
                 </ul>
+                @if (job.stack.length) {
+                  <ul class="tags small">
+                    @for (t of job.stack; track t) {
+                      <li>{{ t }}</li>
+                    }
+                  </ul>
+                }
               </div>
             </li>
           }
         </ol>
+        <p class="earlier muted">{{ i18n.t(earlier) }}</p>
       </section>
 
       <section id="creditdesk" class="wrap section">
-        <p class="kicker">02 · {{ i18n.t({ en: 'Case study', pt: 'Estudo de caso' }) }}</p>
+        <p class="kicker">03 · {{ i18n.t({ en: 'Case study', pt: 'Estudo de caso' }) }}</p>
         <h2>CreditDesk</h2>
         <p class="lead small">
           {{
@@ -200,7 +257,7 @@ import { SiteHeader } from './site-header';
       </section>
 
       <section class="wrap section">
-        <p class="kicker">03 · {{ i18n.t({ en: 'Toolbox', pt: 'Ferramentas' }) }}</p>
+        <p class="kicker">04 · {{ i18n.t({ en: 'Toolbox', pt: 'Ferramentas' }) }}</p>
         <h2>
           {{
             i18n.t({
@@ -224,12 +281,14 @@ import { SiteHeader } from './site-header';
       </section>
 
       <section class="wrap section">
-        <p class="kicker">04 · {{ i18n.t({ en: 'Other projects', pt: 'Outros projetos' }) }}</p>
+        <p class="kicker">05 · {{ i18n.t({ en: 'Projects', pt: 'Projetos' }) }}</p>
+        <h2>{{ i18n.t({ en: 'Applied AI, in practice', pt: 'IA aplicada, na prática' }) }}</h2>
         <div class="projects">
           @for (p of projects; track p.name) {
             <a class="card project" [href]="p.url" target="_blank" rel="noopener">
-              <h3 class="mono">{{ p.name }} ↗</h3>
+              <h3>{{ p.name }} ↗</h3>
               <p>{{ i18n.t(p.text) }}</p>
+              <p class="mono url">{{ p.urlLabel }}</p>
               <ul class="tags">
                 @for (t of p.tags; track t) {
                   <li>{{ t }}</li>
@@ -240,21 +299,50 @@ import { SiteHeader } from './site-header';
         </div>
       </section>
 
-      <footer class="wrap foot">
-        <p class="kicker">{{ i18n.t({ en: 'Let’s talk', pt: 'Vamos conversar' }) }}</p>
-        <p class="lead small">
+      <section class="wrap section">
+        <p class="kicker">06 · {{ i18n.t({ en: 'Writing', pt: 'Publicações' }) }}</p>
+        <h2>
           {{
             i18n.t({
-              en: 'Open to remote senior front-end or full-stack roles, in Brazil or abroad.',
-              pt: 'Aberta a vagas remotas de front-end sênior ou full-stack, no Brasil ou no exterior.',
+              en: 'Notes from the bank front line',
+              pt: 'Aprendizados do front-end bancário',
+            })
+          }}
+        </h2>
+        <p class="body muted">
+          {{
+            i18n.t({
+              en: 'Bilingual (PT / EN) carousels on LinkedIn.',
+              pt: 'Carrosséis bilíngues (PT / EN) no LinkedIn.',
             })
           }}
         </p>
+        <div class="projects">
+          @for (w of writing; track $index) {
+            <a
+              class="card project"
+              [href]="profile.links.linkedinPosts"
+              target="_blank"
+              rel="noopener"
+            >
+              <h3>{{ i18n.t(w.title) }} ↗</h3>
+              <p>{{ i18n.t(w.text) }}</p>
+            </a>
+          }
+        </div>
+      </section>
+
+      <footer class="wrap foot">
+        <p class="kicker">{{ i18n.t({ en: 'Let’s talk', pt: 'Vamos conversar' }) }}</p>
+        <p class="lead small">{{ i18n.t(profile.lookingFor) }}</p>
         <div class="cta">
           <a class="btn btn-primary" [href]="profile.links.linkedin" target="_blank" rel="noopener"
             >LinkedIn ↗</a
           >
           <a class="btn" [href]="profile.links.github" target="_blank" rel="noopener">GitHub ↗</a>
+          <a class="btn btn-ghost" routerLink="/resume">{{
+            i18n.t({ en: 'Resume', pt: 'Currículo' })
+          }}</a>
         </div>
         <p class="muted fine">
           © {{ year }} {{ profile.fullName }} ·
@@ -274,8 +362,10 @@ export class Home {
   protected readonly i18n = inject(I18n);
   protected readonly profile = PROFILE;
   protected readonly experience = EXPERIENCE;
+  protected readonly earlier = EARLIER_EXPERIENCE;
   protected readonly skills = SKILLS;
   protected readonly projects = PROJECTS;
+  protected readonly writing = WRITING;
   protected readonly demoUsers = DEMO_USERS;
   protected readonly year = new Date().getFullYear();
 }

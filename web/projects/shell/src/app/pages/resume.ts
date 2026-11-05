@@ -1,6 +1,15 @@
 import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
 import { I18n } from '@creditdesk/shared';
-import { CERTIFICATIONS, EDUCATION, EXPERIENCE, LANGUAGES, PROFILE, SKILLS } from '../content';
+import {
+  CERTIFICATIONS,
+  EARLIER_EXPERIENCE,
+  EDUCATION,
+  EXPERIENCE,
+  LANGUAGES,
+  PROFILE,
+  PROJECTS,
+  SKILLS,
+} from '../content';
 import { SiteHeader } from './site-header';
 
 /** One-page resume. "Download PDF" is the browser's print-to-PDF with print styles: always matches the site. */
@@ -23,14 +32,19 @@ import { SiteHeader } from './site-header';
     </div>
 
     <article class="sheet">
-      <header>
-        <h1>{{ profile.fullName }}</h1>
-        <p class="title">{{ i18n.t(profile.title) }} · {{ i18n.t(profile.location) }}</p>
-        <p class="links">
-          <a [href]="profile.links.linkedin">linkedin.com/in/vani-santos-9822a6b7</a> ·
-          <a [href]="profile.links.github">github.com/vanilds</a> ·
-          <a href="https://vanilds.github.io">vanilds.github.io</a>
-        </p>
+      <header class="head">
+        <img class="photo" [src]="profile.photo" width="96" height="96" alt="" />
+        <div>
+          <h1>{{ profile.fullName }}</h1>
+          <p class="title">{{ i18n.t(profile.title) }}</p>
+          <p class="tagline">{{ i18n.t(profile.tagline) }}</p>
+          <p class="links">{{ i18n.t(profile.location) }}</p>
+          <p class="links">
+            <a [href]="profile.links.linkedin">linkedin.com/in/vani-santos-9822a6b7</a> ·
+            <a [href]="profile.links.github">github.com/vanilds</a> ·
+            <a href="https://vanilds.github.io">vanilds.github.io</a>
+          </p>
+        </div>
       </header>
 
       <section>
@@ -50,7 +64,12 @@ import { SiteHeader } from './site-header';
                 }
                 — {{ i18n.t(job.role) }}
               </h3>
-              <span class="period">{{ i18n.t(job.period) }}</span>
+              <span class="period"
+                >{{ i18n.t(job.period) }}
+                @if (job.place) {
+                  · {{ i18n.t(job.place) }}
+                }
+              </span>
             </div>
             <ul>
               @for (p of job.points; track $index) {
@@ -62,10 +81,11 @@ import { SiteHeader } from './site-header';
             }
           </div>
         }
+        <p class="earlier">{{ i18n.t(earlier) }}</p>
       </section>
 
       <section>
-        <h2>{{ i18n.t({ en: 'Portfolio project', pt: 'Projeto de portfólio' }) }}</h2>
+        <h2>{{ i18n.t({ en: 'Projects', pt: 'Projetos' }) }}</h2>
         <div class="job">
           <div class="job-head">
             <h3>CreditDesk — vanilds.github.io</h3>
@@ -98,6 +118,12 @@ import { SiteHeader } from './site-header';
             </li>
           </ul>
         </div>
+        @for (p of projects; track p.name) {
+          <p class="project">
+            <strong>{{ p.name }}</strong> — {{ i18n.t(p.text) }}
+            <span class="stack">{{ p.urlLabel }}</span>
+          </p>
+        }
       </section>
 
       <section class="two">
@@ -237,6 +263,42 @@ import { SiteHeader } from './site-header';
         grid-template-columns: 1fr;
       }
     }
+    .head {
+      display: flex;
+      gap: 20px;
+      align-items: center;
+    }
+    .photo {
+      width: 96px;
+      height: 96px;
+      border-radius: 50%;
+      object-fit: cover;
+      flex: none;
+      border: 2px solid var(--orange);
+    }
+    .tagline {
+      margin: 4px 0 0;
+      font-size: 13px;
+      color: var(--muted);
+    }
+    .earlier {
+      margin-top: 14px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+    .project {
+      margin-top: 10px;
+    }
+    .project .stack {
+      display: block;
+      margin-top: 2px;
+    }
+    @media (max-width: 520px) {
+      .head {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+    }
     @media print {
       .sheet {
         border: 0;
@@ -248,7 +310,13 @@ import { SiteHeader } from './site-header';
       }
       section {
         margin-top: 14px;
-        break-inside: avoid-page;
+      }
+      h2 {
+        break-after: avoid;
+      }
+      .photo {
+        width: 80px;
+        height: 80px;
       }
       .job {
         break-inside: avoid;
@@ -268,6 +336,8 @@ export class Resume {
   protected readonly education = EDUCATION;
   protected readonly certifications = CERTIFICATIONS;
   protected readonly languages = LANGUAGES;
+  protected readonly projects = PROJECTS;
+  protected readonly earlier = EARLIER_EXPERIENCE;
 
   protected print(): void {
     window.print();
