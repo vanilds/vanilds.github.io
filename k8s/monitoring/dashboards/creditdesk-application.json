@@ -1108,6 +1108,7 @@
     "label": "Data source",
     "type": "datasource",
     "query": "prometheus",
+    "regex": "/-prom$|^Prometheus$/",
     "current": {},
     "hide": 0,
     "refresh": 1

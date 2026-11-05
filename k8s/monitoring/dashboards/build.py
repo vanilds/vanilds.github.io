@@ -82,6 +82,9 @@ class Board:
             "panels": self.panels, "annotations": {"list": []},
             "templating": {"list": [{
                 "name": "datasource", "label": "Data source", "type": "datasource", "query": "prometheus",
+                # Grafana Cloud also has Prometheus-type sources for account usage (grafanacloud-usage, -ml-metrics);
+                # without a filter the variable picked those first and every panel was empty.
+                "regex": "/-prom$|^Prometheus$/",
                 "current": {}, "hide": 0, "refresh": 1}]},
         }
 
