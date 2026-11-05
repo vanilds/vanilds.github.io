@@ -1,32 +1,39 @@
 // One-click dev environment for GitHub Codespaces (Code → Codespaces → Create codespace on main).
-// Everything runs in the cloud: Java 21, Maven (via ./mvnw) and Docker for the database and Testcontainers.
+// Everything runs in the cloud: Java 21, Maven (via ./mvnw), Node 22 for the Angular apps, and Docker for the
+// database, Keycloak and Testcontainers.
 {
   "name": "CreditDesk",
   "image": "mcr.microsoft.com/devcontainers/java:1-21-bookworm",
   "features": {
     // Docker inside the codespace: `docker compose up` and Testcontainers both need it
-    "ghcr.io/devcontainers/features/docker-in-docker:2": {}
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {},
+    // Angular CLI for the shell and the micro frontends (web/)
+    "ghcr.io/devcontainers/features/node:1": { "version": "22" }
   },
   // The 2-core machine (8 GB) is enough and uses the free monthly quota at half the rate of the 4-core one
   "hostRequirements": {
     "cpus": 2,
     "memory": "8gb"
   },
-  "forwardPorts": [8080, 8180, 5432],
+  "forwardPorts": [4200, 4201, 4202, 8080, 8180, 5432],
   "portsAttributes": {
+    "4200": { "label": "Shell (portfolio + demo)", "onAutoForward": "openBrowser" },
+    "4201": { "label": "mfe-customers", "onAutoForward": "silent" },
+    "4202": { "label": "mfe-proposals", "onAutoForward": "silent" },
     "8080": { "label": "API", "onAutoForward": "notify" },
     "8180": { "label": "Keycloak", "onAutoForward": "silent" },
     "5432": { "label": "PostgreSQL", "onAutoForward": "silent" }
   },
-  // Download Maven and all dependencies once, when the codespace is created
-  "postCreateCommand": "cd api && ./mvnw -B -q dependency:go-offline",
+  // Download Maven and npm dependencies once, when the codespace is created
+  "postCreateCommand": "(cd api && ./mvnw -B -q dependency:go-offline) && (cd web && npm ci)",
   "customizations": {
     "vscode": {
       "extensions": [
         "vscjava.vscode-java-pack",
         "vmware.vscode-boot-dev-pack",
         "humao.rest-client",
-        "ms-azuretools.vscode-docker"
+        "ms-azuretools.vscode-docker",
+        "angular.ng-template"
       ]
     }
   }

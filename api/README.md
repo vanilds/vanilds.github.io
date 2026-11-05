@@ -91,6 +91,7 @@ the proposal module implements.
 | Full CPF only through `POST …/document/reveal` (auditor, reason ≥ 10 chars, audited) | LGPD purpose limitation: access to the full value is exceptional and accountable |
 | Plaintext column removed by a **Java Flyway migration** (V4 add → V5 encrypt → V6 drop) | SQL cannot encrypt without the key; one ordered migration run means no instance ever sees half-converted data |
 | No default encryption keys outside `dev`/`test`; the app refuses to start without them | Fail fast instead of silently encrypting with a known key |
+| CORS: explicit origin list, no cookies, `ETag` exposed | The Angular apps run on other origins (Pages, `localhost:4200-4202`); without `Access-Control-Expose-Headers: ETag` the browser hides the version and every edit would end in 428 |
 | `X-Correlation-Id` in every log line, response and audit record | One id finds a request across logs, audit and (Phase 4) the worker; validated to prevent log injection |
 
 ## Configuration
@@ -102,6 +103,7 @@ Same variable names as the Kubernetes ConfigMap/Secret in [`k8s/base/config.yaml
 | `DB_HOST`, `DB_PORT` (5432), `DB_NAME`, `DB_USER`, `DB_PASSWORD` | PostgreSQL |
 | `OIDC_ISSUER_URI` | Exact `iss` of the tokens, e.g. `http://localhost:8180/realms/creditdesk` |
 | `OIDC_JWK_SET_URI` | Where to fetch Keycloak's public keys (internal address) |
+| `CORS_ALLOWED_ORIGINS` | Browser origins allowed to call the API (comma-separated). Default: `localhost:4200-4202` + `https://vanilds.github.io` |
 | `DOCUMENT_ENCRYPTION_KEY`, `DOCUMENT_HASH_KEY` | 32 random bytes each, base64 (`openssl rand -base64 32`), different from each other |
 
 Profile `dev` adds synthetic demo data (`customer/migration/R__Demo_data.java`) and throwaway keys.

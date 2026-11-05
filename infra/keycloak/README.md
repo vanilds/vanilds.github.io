@@ -15,7 +15,7 @@ realm settings, login rate limiting and no password grant.
 ## Clients
 
 - `creditdesk-web` — public client for the Angular apps: Authorization Code + **PKCE (S256)**, no secret
-  (a browser cannot keep one), redirect only to `localhost:4200` and `vanilds.github.io`.
+  (a browser cannot keep one), redirect only to `localhost:4200-4202` (shell + each micro frontend run alone) and `vanilds.github.io`.
 - `creditdesk-cli` — password grant ("direct access"), only so you can call the API from `api/requests.http`
   or curl while developing. OAuth 2.1 removes this grant; it never leaves local development.
 

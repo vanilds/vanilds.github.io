@@ -7,8 +7,10 @@ import org.springframework.http.MediaType;
 import java.util.Map;
 
 import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.containsStringIgnoringCase;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.anonymous;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.options;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
@@ -81,5 +83,30 @@ class SecurityIT extends IntegrationTest {
         // unsafe values (log injection) are replaced, not echoed
         mvc.perform(get("/api/customers").header("X-Correlation-Id", "bad\nINFO fake log line"))
                 .andExpect(header().string("X-Correlation-Id", org.hamcrest.Matchers.matchesPattern("[0-9a-f-]{36}")));
+    }
+
+    @Test
+    void preflightFromPortfolioIsAllowedAndExposesETag() throws Exception {
+        mvc.perform(options("/api/proposals/1/approve").with(anonymous())
+                        .header("Origin", "https://vanilds.github.io")
+                        .header("Access-Control-Request-Method", "POST")
+                        .header("Access-Control-Request-Headers", "authorization,if-match,content-type"))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Access-Control-Allow-Origin", "https://vanilds.github.io"))
+                .andExpect(header().string("Access-Control-Allow-Headers", containsStringIgnoringCase("if-match")));
+
+        // On the real response the browser only lets JavaScript read headers listed here
+        mvc.perform(get("/api/customers").header("Origin", "http://localhost:4200"))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Access-Control-Expose-Headers", containsString("ETag")));
+    }
+
+    @Test
+    void preflightFromUnknownOriginIsRefused() throws Exception {
+        mvc.perform(options("/api/customers").with(anonymous())
+                        .header("Origin", "https://evil.example")
+                        .header("Access-Control-Request-Method", "GET"))
+                .andExpect(status().isForbidden())
+                .andExpect(header().doesNotExist("Access-Control-Allow-Origin"));
     }
 }

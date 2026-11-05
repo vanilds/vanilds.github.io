@@ -21,7 +21,7 @@ Read this first in any new session. It records decisions and the current state s
 - Repo docs and code in English; conversation with the user in Portuguese.
 - Diagrams follow the user's LinkedIn carousel look (navy grid, orange mono kicker, heavy white title). Sources in `docs/diagrams/src/` (`specs.py` + `render.mjs`, Mermaid + Puppeteer).
 
-## Current state (2026-11-05)
+## Current state (2026-11-05, Phase 3)
 
 Done:
 - Repo created; README with architecture, domain model, flows and branded diagrams.
@@ -35,14 +35,18 @@ Done:
 - Base images come from `public.ecr.aws/docker/library/*` (Docker Hub anonymous rate limits).
 - **Phase 2 done** (branch `phase-2-security`, PR pending review): Keycloak 26 realm `creditdesk` versioned in `infra/keycloak/creditdesk-realm.json` (roles ANALYST/MANAGER/AUDITOR, clients `creditdesk-web` PKCE + `creditdesk-cli` password grant for dev only, audience mapper `creditdesk-api`, demo users ana/bruno/marcos/aline with fixed ids `a0000000-0000-4000-8000-00000000000N`). API: JWT resource server (issuer + JWKS separate, audience check, `MANAGER > ANALYST`), `Actor` parameter, 401/403 as problems; workflow commands submit/cancel/start-analysis/approve/reject/return in `ProposalAction` (owner + four-eyes in the entity); `ETag`/`If-Match` on every write (428/412); `proposal_status_history` + append-only `audit_log` (DB trigger, masked changes, same transaction, correlation id); CPF/CNPJ AES-256-GCM + HMAC (`FieldCipher`), plaintext dropped by migrations V4 → V5 (Java) → V6; auditor reveal with reason; dev seed is now Java (`R__Demo_data`). 98 tests. Verified end to end with a real Keycloak and a Phase-1 database upgrade.
 - Gotcha: `start-analysis` is the manual SUBMITTED → IN_ANALYSIS path; Phase 4's AI worker will call the same transition automatically.
-- Gotcha: Docker builds in the Claude sandbox need proxy workarounds — e2e there runs the jar on the host with Postgres/Keycloak containers.
+- Gotcha: Docker builds in the Claude sandbox need proxy workarounds — e2e there runs the jar on the host with Postgres/Keycloak containers. The sandbox may also need `dockerd` started by hand for Testcontainers.
+- **Phase 3 done** (branch `phase-3-front`): `web/` Angular 22 workspace — `shell` (portfolio + resume EN/PT + demo frame, GitHub Pages), `mfe-customers` (4201), `mfe-proposals` (4202), `shared` (`@creditdesk/shared` tsconfig path, NF `sharedMappings` singleton: OIDC login via `angular-auth-oidc-client` code+PKCE, `demoGuard` probes Keycloak discovery with 8 s timeout → `/demo-offline`, API client with `Versioned<T>` ETag/If-Match, RFC 9457 `toProblem`, `workflow.ts` mirror of `ProposalAction.java`, i18n signal, design tokens in `projects/shared/styles`). Remotes expose `./routes`, loaded lazily with `loadRemoteModule({ remoteEntry })` (no manifest at startup). Types generated from `api/openapi.yaml` (`npm run api:types`, openapi-typescript with an npm `overrides` for TS 6). API: CORS (`creditdesk.cors.allowed-origins`, exposes ETag). Keycloak `creditdesk-web` redirects now include 4201/4202. CI `.github/workflows/web.yml` (types check, Vitest, builds, Pages deploy on main with 404.html fallback). 100 API tests + 21 front tests; full browser flow verified headless (login ana → customer → proposal → submit → marcos start/return, offline page with Keycloak stopped, print-to-PDF resume).
+- Portfolio content (resume facts) lives in `web/projects/shell/src/app/content.ts` — the user must review it; no phone or e-mail on the public site by decision.
+- Gotcha: `angular-auth-oidc-client` navigates to `postLoginRoute` (default `/`) after the code exchange — set to `/demo`.
+- Pending user action for Phase 3: Settings → Pages → Source = **GitHub Actions** (until then Pages keeps serving the README from the branch).
 
 ## Roadmap
 
 1. Phase 1 — CRUD backend (done): `api/` Spring Boot service for customers and proposals, Postgres + Flyway, CPF/CNPJ validation, pagination/filters, RFC 9457, OpenAPI, Testcontainers, `docker compose up`, `.devcontainer` for Codespaces.
 2. Phase 2 — Keycloak, roles, workflow transitions, optimistic locking (`ETag`/`If-Match`), audit log, document encryption (done).
-3. **Phase 3 — shell (portfolio + resume) on GitHub Pages + two micro frontends** ← next. Login via `creditdesk-web` (Authorization Code + PKCE); API needs CORS for `localhost:4200` and `vanilds.github.io`.
-4. Phase 4 — outbox → RabbitMQ, DLQ, LangGraph worker, presigned S3 uploads.
+3. Phase 3 — shell (portfolio + resume) on GitHub Pages + two micro frontends (done).
+4. **Phase 4** ← next — outbox → RabbitMQ, DLQ, LangGraph worker, presigned S3 uploads.
 5. Phase 5 — kind locally (Codespaces): ingress, probes, limits, HPA.
 6. Phase 6 — deploy to EC2: GHCR multi-arch images, `k8s/overlays/aws`, TLS, Argo CD, SSM secrets.
 7. Phase 7 — Prometheus/Grafana, tracing by correlation-id, daily `pg_dump` to S3 + restore test, incident drills in `docs/`.

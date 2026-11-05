@@ -1,0 +1,48 @@
+{
+  "name": "web",
+  "version": "0.0.0",
+  "scripts": {
+    "ng": "ng",
+    "start": "ng serve shell",
+    "start:customers": "ng serve mfe-customers",
+    "start:proposals": "ng serve mfe-proposals",
+    "start:all": "node scripts/serve-all.mjs",
+    "build": "ng build mfe-customers && ng build mfe-proposals && ng build shell",
+    "test": "ng test shared --watch=false && ng test shell --watch=false && ng test mfe-customers --watch=false && ng test mfe-proposals --watch=false",
+    "api:types": "openapi-typescript ../api/openapi.yaml -o projects/shared/src/lib/api/schema.ts --root-types --root-types-no-schema-prefix && prettier --write projects/shared/src/lib/api/schema.ts",
+    "api:check": "npm run api:types && git diff --exit-code -- projects/shared/src/lib/api/schema.ts"
+  },
+  "private": true,
+  "packageManager": "npm@10.9.9",
+  "dependencies": {
+    "@angular/common": "^22.2.0",
+    "@angular/compiler": "^22.2.0",
+    "@angular/core": "^22.2.0",
+    "@angular/forms": "^22.2.0",
+    "@angular/platform-browser": "^22.2.0",
+    "@angular/router": "^22.2.0",
+    "angular-auth-oidc-client": "^22.0.2",
+    "es-module-shims": "^2.8.0",
+    "rxjs": "~7.8.0",
+    "tslib": "^2.3.0"
+  },
+  "devDependencies": {
+    "@angular-architects/native-federation": "^22.2.4",
+    "@angular/build": "^22.2.6",
+    "@angular/cli": "^22.2.6",
+    "@angular/compiler-cli": "^22.2.0",
+    "@angular/localize": "22.2",
+    "@softarc/native-federation-orchestrator": "^4.8.0",
+    "jsdom": "^30.0.0",
+    "ng-packagr": "^22.2.0",
+    "openapi-typescript": "^7.13.0",
+    "prettier": "^3.8.1",
+    "typescript": "~6.0.2",
+    "vitest": "^5.0.0"
+  },
+  "overrides": {
+    "openapi-typescript": {
+      "typescript": "$typescript"
+    }
+  }
+}
