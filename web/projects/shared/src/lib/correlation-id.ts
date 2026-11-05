@@ -1,6 +1,6 @@
 import { HttpInterceptorFn } from '@angular/common/http';
 import { inject } from '@angular/core';
-import { CREDITDESK_ENV } from './config';
+import { CREDITDESK_ENV, isApiRequest } from './config';
 
 /**
  * Every API call carries an `X-Correlation-Id`. The API writes it on each log line and in the audit log,
@@ -8,7 +8,7 @@ import { CREDITDESK_ENV } from './config';
  */
 export const correlationIdInterceptor: HttpInterceptorFn = (req, next) => {
   const env = inject(CREDITDESK_ENV, { optional: true });
-  if (!env || !req.url.startsWith(env.apiUrl) || req.headers.has('X-Correlation-Id')) {
+  if (!env || !isApiRequest(env, req.url) || req.headers.has('X-Correlation-Id')) {
     return next(req);
   }
   return next(req.clone({ setHeaders: { 'X-Correlation-Id': crypto.randomUUID() } }));

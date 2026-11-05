@@ -44,6 +44,16 @@ export function clusterEnvironment(origin: string): CreditDeskEnvironment {
   };
 }
 
+/**
+ * True only for calls to our API (`<apiUrl>/api/...`). On a cluster the API, Keycloak and the micro frontends share
+ * one origin, so "starts with apiUrl" is not enough: the API-only headers (X-Correlation-Id, the bearer token) would
+ * also go to Keycloak. From GitHub Pages that turns Keycloak's discovery into a CORS preflight that Keycloak rejects
+ * (it does not allow X-Correlation-Id), and the demo looked offline while the cluster was up.
+ */
+export function isApiRequest(env: Pick<CreditDeskEnvironment, 'apiUrl'>, url: string): boolean {
+  return url.startsWith(`${env.apiUrl}/api/`);
+}
+
 /** Public demo on the EC2 cluster (Phase 6). Offline outside weekdays 08:00–20:00 São Paulo. */
 export const PUBLIC_ENVIRONMENT: CreditDeskEnvironment = clusterEnvironment('https://creditdesk.duckdns.org');
 

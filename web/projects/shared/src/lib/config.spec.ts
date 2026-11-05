@@ -1,4 +1,4 @@
-import { LOCAL_ENVIRONMENT, PUBLIC_ENVIRONMENT, environmentFor } from './config';
+import { LOCAL_ENVIRONMENT, PUBLIC_ENVIRONMENT, environmentFor, isApiRequest } from './config';
 
 const at = (url: string) => {
   const u = new URL(url);
@@ -24,5 +24,18 @@ describe('environmentFor', () => {
 
   it('treats localhost on another port as a cluster (kind port 8088 on your own machine)', () => {
     expect(environmentFor(at('http://localhost:8088/')).apiUrl).toBe('http://localhost:8088');
+  });
+});
+
+describe('isApiRequest', () => {
+  it('matches only the API on a cluster, where Keycloak and the micro frontends share the origin', () => {
+    expect(isApiRequest(PUBLIC_ENVIRONMENT, 'https://creditdesk.duckdns.org/api/customers?page=0')).toBe(true);
+    expect(isApiRequest(PUBLIC_ENVIRONMENT, `${PUBLIC_ENVIRONMENT.authority}/.well-known/openid-configuration`)).toBe(false);
+    expect(isApiRequest(PUBLIC_ENVIRONMENT, PUBLIC_ENVIRONMENT.remotes.customers)).toBe(false);
+  });
+
+  it('matches the API of the docker compose stack', () => {
+    expect(isApiRequest(LOCAL_ENVIRONMENT, 'http://localhost:8080/api/proposals')).toBe(true);
+    expect(isApiRequest(LOCAL_ENVIRONMENT, `${LOCAL_ENVIRONMENT.authority}/protocol/openid-connect/token`)).toBe(false);
   });
 });
